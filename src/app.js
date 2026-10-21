@@ -757,8 +757,11 @@ export class VisonicApp {
     } catch (err) {
       if (err instanceof VisonicError && err.kind === 'late') throw this.refused(T.tooLate);
       if (err instanceof VisonicError && err.kind === 'offline') throw this.refused(T.offline);
-      if (err instanceof VisonicError && (err.kind === 'withdrawn' || err.kind === 'preempted')) {
+      if (err instanceof VisonicError && err.kind === 'withdrawn') {
         throw this.refused(T.disarmWithdrawn);
+      }
+      if (err instanceof VisonicError && err.kind === 'preempted') {
+        throw this.refused(T.preempted);
       }
       throw this.refused(T.stateUnknown);
     }
@@ -812,11 +815,22 @@ export class VisonicApp {
       const known = this.model.system;
       if (level < 2 && (!known || VisonicApp.protection(known) >= level)) {
         this.logger.warn(`Arm REFUSED (${label}): the state could not be read`);
-        throw this.refused(T.stateUnknown);
+        throw this.refused(this.covered(mode) ? T.armCovered : T.stateUnknown);
       }
       this.logger.warn(`Arm: the state could not be read (${err.message}); sent anyway`);
     }
     if (session !== this.session) throw this.refused(T.restarted);
+    if (status && this.disarmUncertain()) {
+      // A disarm left lately with no known outcome: the state read may come
+      // before its effect. Never "nothing sent" on it: the same level is sent
+      // again (it lowers nothing), a stronger one is no success.
+      if (VisonicApp.protection(status) > level) {
+        this.logger.warn(`Arm (${label}): a disarm may still apply, state uncertain`);
+        this.scheduleReadBack();
+        throw this.error(T.uncertainAfterDisarm);
+      }
+      status = undefined;
+    }
     if (status && VisonicApp.protection(status) >= level) {
       // Never "arm stay" over "armed away": that would lower the protection.
       this.logger.info(`Panel already ${status.mode} (${label}): nothing sent`);
@@ -837,10 +851,18 @@ export class VisonicApp {
    */
   covered(mode) {
     const level = VisonicApp.protection({ mode });
+    // An arm away is never held back: sending it again lowers nothing.
+    if (level >= 2 || this.disarmUncertain()) return false;
     const known = this.model.system;
-    if (known && known.mode !== 'unknown' && VisonicApp.protection(known) >= level) return true;
+    if (known && known.mode !== 'unknown' && VisonicApp.protection(known) > level) return true;
     const last = this.lastArm;
-    return Boolean(last && last.level >= level && this.now() - last.at < TIMINGS.answerBy);
+    return Boolean(last && last.level > level && this.now() - last.at < TIMINGS.answerBy);
+  }
+
+  /** A disarm written less than answerBy ago whose outcome is not known. */
+  disarmUncertain() {
+    const at = this.disarmWrittenAt;
+    return at !== undefined && this.now() - at < TIMINGS.answerBy;
   }
 
   /**
@@ -949,6 +971,8 @@ export class VisonicApp {
       this.commanded = { mode, until: this.now() + TIMINGS.commandMemory };
     };
     const unconfirmed = (why, err) => {
+      // Its outcome is unknown: it never holds a later arm back.
+      if (arming) this.lastArm = undefined;
       this.logger.warn(`Command sent, NOT confirmed (${label}): ${why}`);
       onSent();
       this.scheduleReadBack();
@@ -968,6 +992,7 @@ export class VisonicApp {
           this.sentWithCode = { code, at: this.now() };
           stoppedBefore = this.codeStopped();
           if (arming) this.lastArm = { level: VisonicApp.protection({ mode }), at: this.now() };
+          else this.disarmWrittenAt = this.now();
         },
         // …and run once more by the client, right before the socket write.
         check: () => {
@@ -1032,9 +1057,12 @@ export class VisonicApp {
     }
     if (!confirmed) {
       if (ambiguous) throw unconfirmed('ambiguous acknowledge');
+      if (!this.client.connected) throw unconfirmed('the connection was cut');
+      if (arming) this.lastArm = undefined;
       this.logger.warn(`Command acknowledged, state NOT confirmed yet (${label})`);
       throw this.error(fill(T.notApplied, name));
     }
+    if (!arming) this.disarmWrittenAt = undefined;
     this.logger.info(`Command confirmed by the state read back (${label})`);
   }
 

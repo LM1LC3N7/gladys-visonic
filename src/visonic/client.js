@@ -214,6 +214,7 @@ export class VisonicClient extends EventEmitter {
     this.inflight = undefined;
     if (inflight) {
       this.timers.clearTimeout(inflight.timer);
+      this.timers.clearTimeout(inflight.slotTimer);
       inflight.reject(
         new VisonicError('The connection to the panel ended', 'lost', { sent: inflight.written }),
       );
@@ -376,7 +377,14 @@ export class VisonicClient extends EventEmitter {
     } else {
       this.logDrops();
     }
-    if (this.dropRun >= LIMITS.maxRejects) {
+    // Also per period (pyvisonic CRC_ERROR_PERIOD): good frames between
+    // them do not hide a stream of malformed ones.
+    const now = this.now();
+    if (!this.dropWindow || now - this.dropWindow.at >= 60_000) {
+      this.dropWindow = { at: now, count: 0 };
+    }
+    this.dropWindow.count += 1;
+    if (this.dropRun >= LIMITS.maxRejects || this.dropWindow.count > LIMITS.maxRejectsPerMinute) {
       this.logDrops(true);
       this.lost(generation, 'too many malformed frames from the adapter');
     }
@@ -431,6 +439,16 @@ export class VisonicClient extends EventEmitter {
     if (needsAck(type)) this.writeAck(generation);
     if (generation !== this.generation) return;
     if (this.settling) {
+      if (type === TYPE.EVENTS) {
+        // An alarm event (fire, panic, gas…) kept by the adapter is still an
+        // alarm: Standard mode gives it nowhere else. Read, and told.
+        const events = decodeEvents(data);
+        if (events.length > 0) {
+          this.logger.warn('Visonic: events received at connection (kept by the adapter?)');
+          this.emit('events', events);
+        }
+        return;
+      }
       this.logger.debug(
         `Visonic: message ${hex(type)} at connection, not read (kept by the adapter?)`,
       );
@@ -469,13 +487,29 @@ export class VisonicClient extends EventEmitter {
 
   // --- The line: one write queue, 190 ms between two frames ---------------------
 
-  /** Our acknowledge: ahead of the requests, in its turn on the line. */
+  /**
+   * Our acknowledge, in its turn on the line: at most ACKS_AHEAD of them go
+   * before a request waiting for its slot (the others after it). More than
+   * MAX_ACKS waiting: the line cannot follow the panel, cut as a flood.
+   */
   writeAck(generation) {
     if (generation !== this.generation || !this.socket) return;
+    const waiting = this.out.filter((item) => item.ack).length;
+    if (waiting >= LIMITS.maxAcksWaiting) {
+      this.logger.warn('Visonic: too many messages to acknowledge, connection cut');
+      this.lost(generation, 'too many messages to acknowledge');
+      return;
+    }
     const at = this.out.findIndex((item) => !item.ack);
     const item = { ack: true, generation };
-    if (at < 0) this.out.push(item);
-    else this.out.splice(at, 0, item);
+    const request = at < 0 ? undefined : this.out[at];
+    if (!request || (request.passed ?? 0) >= LIMITS.acksAhead) {
+      this.out.push(item);
+    } else {
+      // Ahead of the request, at most acksAhead times while it waits.
+      request.passed = (request.passed ?? 0) + 1;
+      this.out.splice(at, 0, item);
+    }
     this.drain();
   }
 
@@ -646,6 +680,7 @@ export class VisonicClient extends EventEmitter {
     const entry = this.inflight;
     if (!entry || entry.protective) return;
     this.timers.clearTimeout(entry.timer);
+    this.timers.clearTimeout(entry.slotTimer);
     this.inflight = undefined;
     if (entry.written && (entry.expect === 'ack' || !entry.ackSeen)) this.markLate();
     this.logger.debug(`Visonic: ${entry.label} preempted by a protective command`);
@@ -667,6 +702,7 @@ export class VisonicClient extends EventEmitter {
     if (this.inflight && this.inflight.kind === kind && !this.inflight.written) {
       const entry = this.inflight;
       this.inflight = undefined;
+      this.timers.clearTimeout(entry.slotTimer);
       entry.reject(new VisonicError(`${entry.label} withdrawn`, 'withdrawn'));
       count += 1;
       this.pump();
@@ -692,16 +728,34 @@ export class VisonicClient extends EventEmitter {
     }
     this.queue.shift();
     this.timers.clearTimeout(entry.deadline);
-    // In flight from now: it waits for its slot on the line.
+    // In flight from now: it waits for its slot on the line, never past its
+    // own deadline (sendBy, or its timeout when it has none).
     this.inflight = entry;
     const generation = this.generation;
-    this.out.push({ ack: false, write: () => this.writeRequest(entry, generation) });
+    const limit = (entry.sendBy ?? this.now() + entry.timeout) - this.now();
+    entry.slotTimer = this.timers.setTimeout(
+      () => {
+        if (this.inflight !== entry || entry.written) return;
+        this.inflight = undefined;
+        entry.reject(new VisonicError(`${entry.label} not sent in time`, 'late'));
+        this.pump();
+      },
+      Math.max(0, limit),
+    );
+    // Behind acksAhead acknowledges at most, whatever is waiting already.
+    const at = Math.min(this.out.length, LIMITS.acksAhead);
+    this.out.splice(at, 0, {
+      ack: false,
+      passed: at,
+      write: () => this.writeRequest(entry, generation),
+    });
     this.drain();
   }
 
   /** The slot of a request on the line came: last checks, then the write. */
   writeRequest(entry, generation) {
     if (generation !== this.generation || this.inflight !== entry) return;
+    this.timers.clearTimeout(entry.slotTimer);
     const fail = (err) => {
       this.inflight = undefined;
       entry.reject(err);

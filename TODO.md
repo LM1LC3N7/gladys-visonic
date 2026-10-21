@@ -65,6 +65,29 @@ up to date at the end of every milestone.
   for PowerMaster too) is enough, and not too slow for the deadlines.
 - F1 (PowerMax+) and F4 (PowerMaster images): cut by pyvisonic's lengths,
   never read.
+- The rescue of 02 / 08 inside a broken or unknown frame may take data
+  bytes `0D 08 F7 0A` for a denial (a cautious effect: the code stops until
+  a click). Check how often real broken frames hold such bytes.
+- Whether a real panel ever sends more than 10 messages to acknowledge in a
+  row (the line is cut beyond, as a flood).
+
+## Decisions after review 2
+
+- **B1**: a request waiting for its slot keeps its deadline (`sendBy`, or
+  its timeout) and is refused "late" at it; at most 2 acknowledges go
+  before it, whatever is queued; more than 10 acknowledges waiting cut the
+  link; more than 100 malformed frames in a minute too.
+- **I-A**: a disarm written less than 4.5 s ago and not confirmed makes the
+  next arm never "nothing sent": the same level is sent again, a stronger
+  one read (arm stay on armed away) gives an error "state uncertain", never
+  a success.
+- **I-B**: an arm away is never held back by `covered()`; an arm stay only
+  by a strictly stronger state in memory or arm away written less than
+  4.5 s ago; an arm whose outcome is not confirmed never covers a later one.
+- **m1**: "an arming at least as strong" when an arm stay is refused behind
+  an arm away. **m2**: A7 events of the first 500 ms are read (an alarm kept
+  by the adapter is still an alarm). **m4**: a disarm whose read an arm took
+  says so ("an arming in progress took the line").
 
 ## Decisions
 

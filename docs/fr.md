@@ -122,8 +122,12 @@ utilisateur de la centrale qui lui soit propre.
   jamais derrière eux : il retire les désarmements encore en attente, et
   prend la ligne à une relecture d'état ou à un désarmement déjà envoyé et
   pas encore acquitté (ce désarmement est alors annoncé « envoyée, sans
-  confirmation »). Les armements passent un par un : un armement demandé
-  juste après un plus fort n'envoie rien.
+  confirmation »). Les armements passent un par un : un « armement
+  partiel » demandé juste après un « armement total » n'envoie rien ; un
+  « armement total » n'est jamais retenu. Juste après un désarmement dont
+  l'issue n'est pas encore connue, un armement part même si l'état relu
+  montre la centrale encore armée (le désarmement peut s'appliquer après),
+  et n'est jamais annoncé fait sans avoir été envoyé.
 - Une commande qui ne peut pas partir à temps (centrale lente, état
   illisible pour un désarmement) est refusée avec « rien n'a été envoyé ».
   Une commande n'est annoncée faite que lorsque l'état relu la montre ;
@@ -179,7 +183,8 @@ utilisateur de la centrale qui lui soit propre.
   même sorte d'alarme la déclenche au plus une fois toutes les 30 secondes.
 - Ce que l'adaptateur envoie pendant la première demi-seconde d'une
   connexion (des octets qu'il a pu garder pendant qu'aucun client n'était
-  connecté) est acquitté mais pas lu. Les trames sont écrites à 190 ms
+  connecté) est acquitté mais pas lu, sauf les événements d'alarme
+  (incendie, panique, gaz…), qui sont lus. Les trames sont écrites à 190 ms
   d'écart au moins, comme le fait pyvisonic (la centrale ne suit pas plus
   vite).
 

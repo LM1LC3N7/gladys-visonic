@@ -108,8 +108,12 @@ to the adapter if it allows it, and give Gladys a panel user of its own.
 - Disarms go one at a time, in order. An arm never waits behind them: it
   withdraws the disarms still waiting, and takes the line from a state read
   or a disarm already sent and not acknowledged yet (that disarm is then
-  reported "sent, without confirmation"). Arms go one at a time: an arm
-  asked right after a stronger one sends nothing.
+  reported "sent, without confirmation"). Arms go one at a time: an "arm
+  stay" asked right after an "arm away" sends nothing; an "arm away" is
+  never held back. Just after a disarm whose outcome is not known yet, an
+  arm is sent even if the state read shows the panel still armed (the
+  disarm may apply after it), and is never reported done without being
+  sent.
 - A command that cannot leave in time (slow panel, unreadable state for a
   disarm) is refused with "nothing was sent". A command is reported done
   only when the state read back shows it; otherwise it is reported "sent,
@@ -159,7 +163,7 @@ to the adapter if it allows it, and give Gladys a panel user of its own.
   The same kind of alarm fires it at most once every 30 seconds.
 - What the adapter sends in the first half second of a connection (bytes it
   may have kept while no client was connected) is acknowledged but not
-  read. Frames are written at least 190 ms apart, as pyvisonic does (the
+  read, except the alarm events (fire, panic, gas…), which are read. Frames are written at least 190 ms apart, as pyvisonic does (the
   panel cannot cope with faster).
 
 ## Privacy

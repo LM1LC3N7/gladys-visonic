@@ -77,4 +77,12 @@ the notes of the version's GitHub Release.
   25 s; at most one wake per 5 s; old states never published by a new
   session.
 
+- A request waiting for its slot on the line keeps its deadline (the answer
+  to Gladys always comes in time); at most two acknowledges go before it;
+  more than 10 acknowledges waiting, or 100 malformed frames a minute, cut
+  the link (review 2).
+- After a disarm with no known outcome, an arm is never "nothing sent";
+  an arm away is never held back; alarm events received at the connection
+  are read.
+
 [Unreleased]: https://github.com/LM1LC3N7/gladys-visonic/commits/main

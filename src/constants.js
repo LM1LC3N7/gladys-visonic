@@ -62,6 +62,12 @@ export const LIMITS = {
   maxPendingWrite: 64 * 1024,
   /** Malformed frames in a row, without a good frame between, before the link is cut. */
   maxRejects: 50,
+  /** Malformed frames in one minute before the link is cut (pyvisonic CRC_ERROR_PERIOD). */
+  maxRejectsPerMinute: 100,
+  /** Acknowledges waiting for the line before it is cut (it cannot follow the panel). */
+  maxAcksWaiting: 10,
+  /** Acknowledges that may go before a request waiting for its slot. */
+  acksAhead: 2,
   /** Frames received per second before the link is cut (a flood, a loop). */
   maxFramesPerSecond: 200,
 };

@@ -123,6 +123,14 @@ export const T = {
     en: `An arming at least as strong was just sent, or the panel is already armed so${nothing.en}`,
     fr: `Un armement au moins aussi fort vient d'être envoyé, ou la centrale est déjà armée ainsi${nothing.fr}`,
   },
+  preempted: {
+    en: `An arming in progress took the line while this disarm waited for the state${nothing.en}`,
+    fr: `Un armement en cours a pris la ligne pendant que ce désarmement attendait l'état${nothing.fr}`,
+  },
+  uncertainAfterDisarm: {
+    en: 'A disarm sent just before may still apply: the state is uncertain, it is read again in 2 s. Arm again if needed.',
+    fr: "Un désarmement envoyé juste avant peut encore s'appliquer : l'état est incertain, il est relu dans 2 s. Réarmez si besoin.",
+  },
   restarted: {
     en: `The connection to the panel restarted while the command was being prepared${nothing.en}`,
     fr: `La connexion à la centrale a redémarré pendant la préparation de la commande${nothing.fr}`,
