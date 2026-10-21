@@ -1,177 +1,354 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Visonic PowerMax",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Visonic PowerMax and PowerMaster alarms, locally through a network adapter.",
+    "fr": "Alarmes Visonic PowerMax et PowerMaster, en local par un adaptateur réseau."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-visonic:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-visonic/main/cover.png",
+  "categories": ["security"],
+  "transports": ["local"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Your Visonic panel",
+        "fr": "Votre centrale Visonic"
+      },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "For Visonic PowerMax and PowerMaster alarm panels whose serial port is wired to a serial-to-network adapter (RS-232 to Ethernet or Wi-Fi), on your network, without any cloud: the state of the panel (disarmed, arming, armed away or stay, entry delay, alarm, fire alarm, ready, trouble), the zones you list (open, motion, tamper, low battery, alarm, bypassed), arm and disarm buttons, scene triggers. A direct serial or USB link is not supported, nor a Powerlink module. The protocol of the panel is not public: it comes from the open-source pyvisonic library. Never tested with a real panel. Unofficial, not affiliated with Visonic.",
+        "fr": "Pour les centrales d'alarme Visonic PowerMax et PowerMaster dont le port série est relié à un adaptateur série-réseau (RS-232 vers Ethernet ou Wi-Fi), sur votre réseau, sans cloud : l'état de la centrale (désarmée, armement en cours, armée totale ou partielle, délai d'entrée, alarme, alarme incendie, prête, défaut), les zones que vous indiquez (ouverte, mouvement, autoprotection, pile faible, alarme, exclue), des boutons d'armement et de désarmement, des déclencheurs de scène. Une liaison série ou USB directe n'est pas prise en charge, ni un module Powerlink. Le protocole de la centrale n'est pas public : il vient de la bibliothèque libre pyvisonic. Jamais testé avec une vraie centrale. Non officiel, sans lien avec Visonic."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-visonic/blob/main/docs/fr.md",
+          "label": {
+            "en": "Guide (French)",
+            "fr": "Guide (français)"
+          }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-visonic/blob/main/docs/en.md",
+          "label": {
+            "en": "Guide (English)",
+            "fr": "Guide (anglais)"
+          }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
-      "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+      "key": "host",
+      "type": "string",
+      "label": {
+        "en": "Address of the network adapter",
+        "fr": "Adresse de l'adaptateur réseau"
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "description": {
+        "en": "The IP address of the serial-to-network adapter wired to the panel (give it a fixed address in your router).",
+        "fr": "L'adresse IP de l'adaptateur série-réseau relié à la centrale (donnez-lui une adresse fixe dans votre box)."
+      },
+      "placeholder": {
+        "en": "192.168.1.70",
+        "fr": "192.168.1.70"
+      },
+      "required": true
     },
     {
-      "key": "longitude",
+      "key": "port",
       "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+      "label": {
+        "en": "TCP port of the adapter",
+        "fr": "Port TCP de l'adaptateur"
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
+      "description": {
+        "en": "The port of the adapter in \"TCP server\" mode, as set in its own web page.",
+        "fr": "Le port de l'adaptateur en mode « serveur TCP », tel que réglé dans sa propre page web."
+      },
+      "placeholder": {
+        "en": "10628",
+        "fr": "10628"
+      },
       "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+      "min": 1,
+      "max": 65535
     },
     {
-      "key": "unit",
+      "key": "user_code",
+      "type": "secret",
+      "label": {
+        "en": "User code",
+        "fr": "Code utilisateur"
+      },
+      "description": {
+        "en": "Optional: the 4-digit code of a panel user, needed only for the commands (arming, disarming); the states need none. It travels in clear text between Gladys, the adapter and the panel, on your network, at each command. A code refused by the panel is never sent again by itself (\"Allow a new try of the code\" button). Kept by Gladys in its database, never shown again, sent only to the panel, never in the logs.",
+        "fr": "Facultatif : le code à 4 chiffres d'un utilisateur de la centrale, nécessaire seulement aux commandes (armement, désarmement) ; les états n'en ont pas besoin. Il circule en clair entre Gladys, l'adaptateur et la centrale, sur votre réseau, à chaque commande. Un code refusé par la centrale n'est jamais renvoyé de lui-même (bouton « Autoriser un nouvel essai du code »). Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement à la centrale, jamais dans les journaux."
+      },
+      "required": false
+    },
+    {
+      "key": "zones",
+      "type": "string",
+      "label": {
+        "en": "Zones",
+        "fr": "Zones"
+      },
+      "description": {
+        "en": "The zones to show (1 to 32), with their kind if not an opening, e.g. \"1-6, 7:motion, 9:smoke, 10:leak\" (opening, motion, smoke, leak).",
+        "fr": "Les zones à afficher (1 à 32), avec leur type si ce n’est pas une ouverture, par ex. « 1-6, 7:motion, 9:smoke, 10:leak » (opening ouverture, motion mouvement, smoke fumée, leak fuite)."
+      },
+      "placeholder": {
+        "en": "1-6, 7:motion",
+        "fr": "1-6, 7:motion"
+      },
+      "required": false
+    },
+    {
+      "key": "safety",
+      "type": "section",
+      "label": {
+        "en": "Safety",
+        "fr": "Sécurité"
+      },
+      "description": {
+        "en": "Anyone who can control the devices in Gladys (dashboard, scenes, the Gladys app) can use the alarm through this integration, with the user code above. Arming is always allowed: arming while someone is inside (a scene, a mistake) may raise a false alarm, the sirens and a call of your alarm monitoring company. Disarming is off by default, behind the option below: allow it only if your Gladys is well protected. Every command is written in the integration logs; the code never is.",
+        "fr": "Toute personne pouvant piloter les appareils dans Gladys (tableau de bord, scènes, application Gladys) peut agir sur l'alarme par cette intégration, avec le code utilisateur ci-dessus. L'armement est toujours permis : armer alors que quelqu'un est à l'intérieur (une scène, une erreur) peut déclencher une fausse alarme, les sirènes et un appel de votre télésurveillance. Le désarmement est désactivé par défaut, derrière l'option ci-dessous : ne l'autorisez que si votre Gladys est bien protégé. Chaque commande est écrite dans les journaux de l'intégration, jamais le code."
+      }
+    },
+    {
+      "key": "allow_disarm",
+      "type": "boolean",
+      "label": {
+        "en": "Allow disarming from Gladys",
+        "fr": "Autoriser le désarmement depuis Gladys"
+      },
+      "description": {
+        "en": "Once checked, every Gladys user, every scene and the Gladys mobile app can disarm with the user code of the configuration, without typing any code.",
+        "fr": "Une fois cochée, tout utilisateur de Gladys, toute scène et l'application mobile Gladys peuvent désarmer avec le code utilisateur de la configuration, sans saisir aucun code."
+      },
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "language",
       "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
-      "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
-    },
-    {
-      "key": "poll_frequency",
-      "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": {
+        "en": "Language of the names",
+        "fr": "Langue des noms"
+      },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "Used for the names of the devices and features added from now on, and for the panel state.",
+        "fr": "Sert aux noms des appareils et fonctionnalités ajoutés désormais, et à l'état de la centrale."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": "fr",
+      "options": [
+        {
+          "value": "fr",
+          "label": {
+            "en": "French",
+            "fr": "Français"
+          }
+        },
+        {
+          "value": "en",
+          "label": {
+            "en": "English",
+            "fr": "Anglais"
+          }
+        }
+      ]
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
-      "timeout_seconds": 30
+      "key": "test_connection",
+      "label": {
+        "en": "Test the connection",
+        "fr": "Tester la connexion"
+      },
+      "timeout_seconds": 10
     },
     {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
+      "key": "allow_code_retry",
+      "label": {
+        "en": "Allow a new try of the code",
+        "fr": "Autoriser un nouvel essai du code"
+      },
+      "timeout_seconds": 10
     }
   ],
   "scene_triggers": [
     {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
+      "key": "alarm_triggered",
+      "label": {
+        "en": "Visonic alarm triggered",
+        "fr": "Alarme Visonic déclenchée"
+      },
       "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
+        "en": "The panel goes into alarm: intrusion, fire, panic, emergency, gas or flood.",
+        "fr": "La centrale passe en alarme : intrusion, incendie, panique, urgence, gaz ou inondation."
+      },
+      "variables": [
+        {
+          "key": "kind",
+          "type": "string",
+          "label": {
+            "en": "Kind of alarm",
+            "fr": "Type d'alarme"
+          }
+        },
+        {
+          "key": "zone",
+          "type": "number",
+          "label": {
+            "en": "Zone in alarm",
+            "fr": "Zone en alarme"
+          }
+        },
+        {
+          "key": "fire",
+          "type": "boolean",
+          "label": {
+            "en": "Fire alarm",
+            "fr": "Alarme incendie"
+          }
+        }
+      ]
+    },
+    {
+      "key": "armed",
+      "label": {
+        "en": "Visonic panel armed",
+        "fr": "Centrale Visonic armée"
+      },
+      "description": {
+        "en": "The panel was armed (from Gladys, a keypad, a key fob or another app), once the exit delay is over.",
+        "fr": "La centrale a été armée (depuis Gladys, un clavier, une télécommande ou une autre application), une fois le délai de sortie écoulé."
       },
       "fields": [
         {
-          "key": "device",
+          "key": "mode",
           "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
+          "label": {
+            "en": "Mode",
+            "fr": "Mode"
+          },
           "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
+            {
+              "value": "armed_away",
+              "label": {
+                "en": "Armed away",
+                "fr": "Armée (totale)"
+              }
+            },
+            {
+              "value": "armed_stay",
+              "label": {
+                "en": "Armed stay",
+                "fr": "Armée (partielle)"
+              }
+            }
           ]
         }
       ],
       "variables": [
         {
-          "key": "target",
+          "key": "mode",
           "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
+          "label": {
+            "en": "Mode",
+            "fr": "Mode"
+          }
+        },
+        {
+          "key": "by_gladys",
+          "type": "boolean",
+          "label": {
+            "en": "Asked by Gladys",
+            "fr": "Demandé par Gladys"
+          }
+        }
+      ]
+    },
+    {
+      "key": "disarmed",
+      "label": {
+        "en": "Visonic panel disarmed",
+        "fr": "Centrale Visonic désarmée"
+      },
+      "description": {
+        "en": "The panel was disarmed (from Gladys, a keypad, a key fob or another app).",
+        "fr": "La centrale a été désarmée (depuis Gladys, un clavier, une télécommande ou une autre application)."
+      },
+      "variables": [
+        {
+          "key": "by_gladys",
+          "type": "boolean",
+          "label": {
+            "en": "Asked by Gladys",
+            "fr": "Demandé par Gladys"
+          }
         }
       ]
     }
   ],
   "scene_actions": [
     {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
+      "key": "arm",
+      "label": {
+        "en": "Arm the Visonic alarm",
+        "fr": "Armer l'alarme Visonic"
+      },
       "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
+        "en": "Arms the panel, away or stay (a user code is needed).",
+        "fr": "Arme la centrale, en total ou en partiel (un code utilisateur est nécessaire)."
       },
       "timeout_seconds": 15,
       "fields": [
         {
-          "key": "device",
+          "key": "mode",
           "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
+          "label": {
+            "en": "Mode",
+            "fr": "Mode"
+          },
+          "required": false,
+          "default": "armed_away",
+          "options": [
+            {
+              "value": "armed_away",
+              "label": {
+                "en": "Armed away",
+                "fr": "Armée (totale)"
+              }
+            },
+            {
+              "value": "armed_stay",
+              "label": {
+                "en": "Armed stay",
+                "fr": "Armée (partielle)"
+              }
+            }
+          ]
         }
       ]
-    }
-  ],
-  "widgets": [
+    },
     {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
+      "key": "disarm",
+      "label": {
+        "en": "Disarm the Visonic alarm",
+        "fr": "Désarmer l'alarme Visonic"
       },
-      "icon": "activity",
-      "action_timeout_seconds": 15
+      "description": {
+        "en": "Disarms the panel: off unless allowed in the configuration.",
+        "fr": "Désarme la centrale : désactivé sauf autorisation dans la configuration."
+      },
+      "timeout_seconds": 15
     }
   ]
 }

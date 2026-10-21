@@ -16,8 +16,8 @@ its only runtime dependency. It started from the official JavaScript template.
 ```bash
 npm install
 npm test                                  # node --test, the built-in runner
-node --test test/devices.test.js          # one file
-node --test --test-name-pattern "plug"    # tests whose name matches
+node --test test/app.test.js              # one file
+node --test --test-name-pattern "disarm"  # tests whose name matches
 npm run lint                              # ESLint
 npm run format:check                      # Prettier, as the CI runs it
 npm run format                            # Prettier, fix in place
@@ -32,17 +32,34 @@ pushing.
 
 ```
 index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
-src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
-src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
+src/handlers.js                   the SDK handlers, shared with the tests
+src/app.js                        VisonicApp: lifecycle, model, devices, states, events, commands
+src/visonic/frame.js              frames: checksum, lengths, linear reader, masks (pyvisonic)
+src/visonic/protocol.js           commands, user code field, A5 / A7 decoding (pyvisonic)
+src/visonic/client.js             one TCP connection: acknowledges, status requests, commands
+src/devices.js                    model -> Gladys devices and states (pure)
+src/publisher.js                  states and scene events under the Gladys rate limits
+src/store.js                      /data: the stop after a refused user code, connection attempts
+src/config.js                     DEFAULTS (mirror the manifest defaults) + normalization
+src/constants.js, src/i18n.js     keys, timings, limits; French and English texts
+scripts/cover.mjs                 cover.png (800x534), plain Node
 gladys-assistant-integration.json manifest: name, config_schema, actions, image...
 docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
-test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
+test/                             node --test, the SDK's fake Gladys + test/helpers/fakeVisonic.js
 .github/scripts/release.mjs       release helpers (manifest bump, changelog), tested in test/
 ```
+
+Safety rules of this integration (see TODO.md "Decisions"): arming is always
+allowed and protective (never behind a disarm, never lowering the
+protection); disarming stays off by default and its option is read again
+right before the write; commands are push buttons, never switches; a disarm
+decides on the state read from the panel just before it; a command is done
+only when the state read back shows it; a command that may have left is
+never reported "not sent"; a refused user code is never sent again by itself
+(only a new code or the "Allow a new try of the code" action lift the stop);
+the user code is never logged; Standard mode only (no download code, no
+Powerlink), TCP only; the panel is never read faster than its interval
+(test button, Discovery, Gladys reconnections send nothing).
 
 ## Rules
 

@@ -12,44 +12,49 @@ the notes of the version's GitHub Release.
 
 ### Added
 
-- A working example of scene triggers, scene actions and dashboard widgets
-  (Gladys 5.1.0 or later).
-- `CHANGELOG.md`, rolled by the Release workflow.
-- A GitHub Release for every version, with its changelog section as notes: the
-  Gladys Supervision page links each version to the repository's releases.
-- CI runs the tests on Node 22 and 24, and builds the Docker image.
-- Dependabot keeps the npm dependencies and the GitHub Actions up to date.
-- `SECURITY.md` (how to report a vulnerability) and `CLAUDE.md` (project rules
-  for contributors and coding assistants).
-- Manifest tests: `version` matches `package.json`, `docker_image` is tagged
-  with it, descriptions hold 10 to 100 characters, placeholders are
-  multi-language objects.
-- The latitude and longitude fields show an example value as placeholder.
+- Local connection to Visonic PowerMax and PowerMaster panels over TCP,
+  through a serial-to-network adapter wired to the serial port of the panel,
+  in the Standard mode of pyvisonic 4.0.8: frames, checksum, acknowledges,
+  status requests, keep-alive and watchdog.
+- The panel as one device: read-only state (disarmed, arming, entry delay,
+  armed away, armed stay, programming), armed, ready, trouble, panel tamper,
+  alarm in progress, fire alarm, link, and arm away / arm stay / disarm push
+  buttons (never a switch).
+- One device per configured zone (1 to 32): open (opening, smoke, leak) or
+  motion, tamper, low battery, alarm, bypassed.
+- Scene triggers `alarm_triggered` (kind, zone, fire), `armed`, `disarmed`;
+  scene actions `arm` and `disarm`; "Test the connection" and "Allow a new
+  try of the code" buttons.
+- State and scene event budgets under the Gladys limits.
+- French and English names, messages and guides; a cover generated in plain
+  Node (`npm run cover`).
 
-### Changed
+### Security
 
-- Node.js 22 or later is required (Node 20 is end-of-life).
-- Integration SDK 0.15.0. The tests now run against the fake Gladys of the
-  SDK, which refuses the payloads Gladys refuses.
-- The refresh interval is one minute minimum, the fastest Gladys polls a
-  device. The plug's power is only sent when it changes, and every 30
-  minutes otherwise.
+- Arming always allowed (it protects), never lowering the protection, never
+  queued behind a disarm (it withdraws the disarms still waiting), never
+  blocked by an unreadable state nor by the waits between connection
+  attempts (one attempt at once). Disarming off by default, behind its own
+  option, read when asked, again after the fresh read, and once more right
+  before the write.
+- A disarm decided on the state read from the panel just before it, one at a
+  time, written within 3.5 s or not at all; a command reported done only
+  when the state read back shows it; one that may have left is reported
+  "sent, without confirmation" and read again; after a command timed out, an
+  acknowledge is treated as ambiguous for 10 s; a command never written while
+  the acknowledge of a status request may still come.
+- A user code refused by the panel ("access denied", even late) stops the
+  commands, kept across restarts in `/data` (the date only, never the code);
+  lifted by a new code or by "Allow a new try of the code". The code is
+  never logged.
+- Standard mode only: no download code, no download of the panel memory, no
+  Powerlink enrolment. TCP only.
+- Connection attempts spaced (10 s to 5 min) and kept in `/data` (written at
+  most once a minute), so a restart loop never connects faster; "Test the
+  connection", Discovery, a Gladys reconnection or an unchanged
+  configuration never read the panel nor reconnect; a late event of an older
+  session publishes nothing.
+- Bounded frames, linear parsing with a running checksum; a flood or too
+  many malformed frames cut the link; no control byte in the files (test).
 
-### Fixed
-
-- Gladys refused the devices of the Discovery tab: the weather station and
-  the plug declared their poll frequency in seconds instead of one of the
-  values Gladys accepts, and were never polled. They now poll every minute,
-  and the readings follow the refresh interval of the configuration.
-
-- The release commit no longer fails `npm run format:check`: the Release
-  workflow updates the manifest `version` and `docker_image` in place instead
-  of re-printing the whole file with `jq`.
-- The integration can write to `/data`: the image creates the directory owned
-  by the `node` user, a new Docker volume was owned by root.
-- A sub-container running the integration's own image follows it to the new
-  tag at each release, as well as in the manifest of the build summary: it kept
-  the previous tag, which may not exist on the registry. Sub-containers on a
-  third-party image (a broker, a database...) keep theirs.
-
-[Unreleased]: https://github.com/GladysAssistant/integration-template-js/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-visonic/commits/main

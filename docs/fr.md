@@ -1,67 +1,179 @@
-# Template de démonstration
+# Visonic PowerMax / PowerMaster pour Gladys
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Cette intégration relie une centrale d'alarme **Visonic PowerMax** ou
+**PowerMaster** à Gladys Assistant, **en local** sur votre réseau, par un
+**adaptateur série-réseau** (RS-232 vers Ethernet ou Wi-Fi) branché sur le
+port série de la centrale.
+
+> **Jamais testée avec un vrai appareil.** Visonic ne publie aucune
+> description du protocole de ses centrales : il vient de la bibliothèque
+> libre [pyvisonic](https://github.com/davesmeghead/pyvisonic) 4.0.8 (celle
+> de l'intégration Visonic de Home Assistant), portée en JavaScript et
+> vérifiée seulement face à une centrale simulée. Faites vos premiers essais
+> sur place, centrale désarmée, et signalez ce qui ne va pas.
+>
+> Intégration non officielle, sans lien avec Visonic.
+
+## Avant de commencer
+
+- Un **adaptateur série-réseau** relié au port série de la centrale (le
+  câblage et les adaptateurs connus pour fonctionner sont dans le
+  [wiki de l'intégration Home Assistant](https://github.com/davesmeghead/visonic/wiki)),
+  réglé en **serveur TCP**, avec les réglages série de la centrale (9600
+  bauds, 8N1 sur la plupart des centrales). Donnez-lui une adresse fixe dans
+  votre box.
+- **Pas pris en charge** : une liaison série ou USB directe vers la machine
+  de Gladys, et un module **Powerlink** de Visonic (pyvisonic déconseille de
+  l'utiliser avec).
+- La plupart des adaptateurs n'acceptent qu'un client à la fois : arrêtez
+  tout autre logiciel qui s'y connecte (Home Assistant, un autre Gladys).
+- Cette intégration n'est **pas** la lecture des détecteurs radio Visonic
+  par un récepteur RFXCOM ou RFPlayer : elle dialogue avec la centrale
+  elle-même.
 
 ## Ce que vous obtenez
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+- **Centrale Visonic** :
+  - **État**, en lecture seule : désarmée, armement en cours (délai de
+    sortie), délai d'entrée, armée (totale), armée (partielle),
+    programmation ;
+  - **Armée**, **Prête à armer**, **Défaut en cours**, **Autoprotection
+    centrale**, **Alarme en cours**, **Alarme incendie**, **Centrale
+    connectée** ;
+  - trois **boutons** : armement total, armement partiel, désarmer.
+- **Un appareil par zone** (seulement celles que vous indiquez, 1 à 32) :
+  ouverte ou non (ouverture, fumée ou fuite selon votre choix), ou mouvement
+  (affiché 30 secondes, la centrale n'envoie jamais la fin d'un mouvement),
+  **autoprotection**, **pile faible**, **alarme**, **exclue**.
+- **Déclencheurs de scène** : alarme déclenchée (son type : intrusion,
+  incendie, panique, urgence, gaz ou inondation, et la zone quand la
+  centrale la donne), centrale armée (mode, demandé par Gladys ou non),
+  centrale désarmée.
+- **Actions de scène** : armer (total ou partiel), désarmer.
+
+Aucune commande n'est un interrupteur : un « éteins tout » d'un assistant
+vocal, de HomeKit ou d'une scène ne peut jamais désarmer l'alarme. Les états
+sont en lecture seule, les commandes sont des boutons.
 
 ## Configuration
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+1. **Adresse de l'adaptateur réseau** : son adresse IP.
+2. **Port TCP de l'adaptateur** : le port de son mode « serveur TCP », tel
+   que réglé dans sa propre page web.
+3. **Code utilisateur** (facultatif) : le code à 4 chiffres d'un utilisateur
+   de la centrale, nécessaire seulement aux commandes ; les états n'en ont
+   pas besoin.
+4. **Zones** : par exemple `1-6, 7:motion, 9:smoke, 10:leak`. Types :
+   `opening` ouverture (par défaut), `motion` mouvement, `smoke` fumée,
+   `leak` fuite. Changer le type d'une zone déjà créée dans Gladys ajoute une
+   nouvelle fonctionnalité et garde l'ancienne (et son historique) :
+   supprimez l'ancienne à la main si vous n'en voulez plus.
+5. **Sécurité** : voir plus bas.
+6. **Langue des noms** : français ou anglais.
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+Le code utilisateur est un champ secret : gardé par Gladys dans sa base,
+jamais réaffiché dans l'interface, envoyé seulement à la centrale. Il
+n'apparaît jamais dans les journaux ni dans `/data`.
 
-## Actions
+Le bouton **Tester la connexion** dit ce que sait la connexion (l'état de la
+centrale, ou pourquoi elle n'est pas connectée et quand vient le prochain
+essai). Il ne se connecte jamais plus tôt que les attentes entre essais ne le
+permettent et n'envoie rien à la centrale (son état est relu toutes les
+25 secondes de toute façon).
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+Le bouton **Autoriser un nouvel essai du code** lève l'arrêt posé après un
+code utilisateur refusé (voir « Sécurité ») : la commande suivante envoie de
+nouveau le code, une fois. Il n'envoie rien lui-même.
 
-## Scènes
+## Ce qui circule sur le réseau
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+Le protocole de la centrale n'a aucune protection propre : **tout circule en
+clair** entre Gladys, l'adaptateur et la centrale, y compris le code
+utilisateur de chaque commande. Tout appareil de votre réseau qui écoute le
+trafic peut le lire, et envoyer des commandes à l'adaptateur. Protégez votre
+réseau (un réseau à part pour les appareils dont vous n'êtes pas sûr),
+limitez l'accès à l'adaptateur s'il le permet, et donnez à Gladys un
+utilisateur de la centrale qui lui soit propre.
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+## Sécurité
 
-## Tableau de bord
+- **L'armement est toujours permis**, avec le code utilisateur : il protège.
+  Armer alors que quelqu'un est à l'intérieur (une scène mal réglée, une
+  erreur) peut déclencher une fausse alarme, les sirènes et un appel de
+  votre télésurveillance. Un armement ne baisse jamais la protection :
+  « armement partiel » alors que la centrale est armée en total n'envoie
+  rien. Pendant que l'intégration attend entre deux essais de connexion, un
+  armement fait un essai tout de suite au lieu d'attendre.
+- **Le désarmement est désactivé par défaut.** Une fois l'option cochée,
+  **tout utilisateur de Gladys, toute scène et l'application mobile Gladys
+  peuvent désarmer, avec le code de la configuration, sans saisir aucun
+  code**. Ne l'autorisez que si votre Gladys est bien protégé (comptes,
+  accès à distance). L'option est relue juste avant l'envoi : décochée
+  pendant qu'un désarmement attend, ce désarmement s'arrête.
+- Avant un désarmement, l'intégration **relit l'état sur la centrale** et
+  décide sur cet état, jamais sur ce qu'elle a en mémoire (déjà désarmée :
+  rien n'est envoyé). Un armement le relit aussi quand il le peut (déjà
+  armée : rien n'est envoyé), mais un état illisible n'arrête jamais un
+  armement.
+- Les désarmements passent un par un, dans l'ordre ; un armement n'attend
+  jamais derrière eux et retire les désarmements encore en attente.
+- Une commande qui ne peut pas partir à temps (centrale lente, état
+  illisible pour un désarmement) est refusée avec « rien n'a été envoyé ».
+  Une commande n'est annoncée faite que lorsque l'état relu la montre ;
+  sinon elle est annoncée « envoyée, sans confirmation » (ou « acquittée,
+  mais l'état relu ne la montre pas encore », par exemple quand une zone est
+  ouverte), et l'état est relu deux secondes plus tard : elle n'est jamais
+  annoncée « non envoyée ».
+- **Quand la centrale refuse le code utilisateur (« accès refusé »),
+  l'intégration ne le renvoie jamais d'elle-même**, même après un
+  redémarrage (des codes faux peuvent bloquer les claviers ou être signalés
+  à votre télésurveillance). Les états continuent d'arriver. Changez le code
+  dans la configuration, ou cliquez sur « Autoriser un nouvel essai du
+  code ». Un refus qui arrive en retard arrête aussi les commandes. Le
+  fichier `/data/visonic-state.json` ne garde que la date de l'arrêt et de
+  la dernière tentative de connexion, jamais le code.
+- Chaque commande, envoyée ou refusée, est écrite dans les journaux de
+  l'intégration ; jamais le code.
 
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+## Connexion
 
-## Dépannage
+- Mode Standard de pyvisonic seulement : l'intégration ne télécharge jamais
+  la mémoire de la centrale (pas besoin du code de téléchargement) et ne
+  s'enregistre jamais comme accessoire Powerlink.
+- L'état est relu toutes les 25 secondes quand rien d'autre ne se passe,
+  tous les états de la centrale environ toutes les 5 minutes ; sans rien
+  reçu pendant 2 minutes, l'intégration se reconnecte.
+- Après une coupure, les nouveaux essais sont espacés : 10 s, 30 s, 1 min,
+  2 min, puis toutes les 5 minutes, et ces attentes tiennent au redémarrage
+  de l'intégration.
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+## Limites connues
+
+- Jamais testée avec un vrai appareil (voir plus haut).
+- **Un seul état de centrale, pas de partitions** : les commandes agissent
+  sur toutes les partitions (comme pyvisonic quand aucune n'est donnée) et
+  l'état affiché est celui que la centrale donne sans partitions. Avec des
+  partitions activées, l'état peut être faux : dites-le-nous.
+- Zones 1 à 32 seulement (les messages d'état du mode Standard) ; pas de
+  noms de zones (elles s'appellent « Zone n », renommez-les dans Gladys).
+- Les centrales PowerMaster envoient davantage (messages B0) que cette
+  version ne lit pas ; leurs états de zones peuvent arriver tard ou pas du
+  tout.
+- En mode Standard, une alarme se voit par un indicateur de la centrale et
+  ses événements : une alarme que la centrale ne termine jamais est effacée
+  au bout de 20 minutes.
+- Aucune identité de la centrale ne se lit sans son code de
+  téléchargement : si l'adresse de l'adaptateur passe à un autre adaptateur
+  (nouveau bail DHCP), l'intégration ne peut pas le voir. Donnez à
+  l'adaptateur une adresse fixe.
+- Une alarme déjà en cours au démarrage de l'intégration ne déclenche
+  aucune scène (seuls les changements vus le font).
+
+## Vie privée
+
+Tout reste sur votre réseau : l'intégration ne parle qu'à l'adaptateur.
+
+## Licence
+
+Apache-2.0. Logique du protocole portée de pyvisonic 4.0.8 (MIT,
+davesmeghead) : voir `THIRD_PARTY_NOTICES.md`.

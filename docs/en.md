@@ -1,61 +1,161 @@
-# Demo Devices Template
+# Visonic PowerMax / PowerMaster for Gladys
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+This integration connects a **Visonic PowerMax** or **PowerMaster** alarm
+panel to Gladys Assistant, **locally** on your network, through a
+**serial-to-network adapter** (RS-232 to Ethernet or Wi-Fi) wired to the
+serial port of the panel.
+
+> **Never tested with a real device.** Visonic publishes no description of
+> the protocol of its panels: it comes from the open-source
+> [pyvisonic](https://github.com/davesmeghead/pyvisonic) 4.0.8 library (the
+> one of the Home Assistant Visonic integration), ported to JavaScript and
+> checked only against a simulated panel. Make your first tries on site,
+> with the panel disarmed, and report what goes wrong.
+>
+> Unofficial integration, not affiliated with Visonic.
+
+## Before you start
+
+- A **serial-to-network adapter** wired to the serial port of the panel (the
+  wiring and the adapters known to work are listed in the
+  [wiki of the Home Assistant integration](https://github.com/davesmeghead/visonic/wiki)),
+  set as a **TCP server**, with the serial settings of the panel (9600
+  bauds, 8N1 on most panels). Give it a fixed address in your router.
+- **Not supported**: a direct serial or USB link to the Gladys machine, and
+  a Visonic **Powerlink** module (pyvisonic says not to use it with one).
+- Most adapters accept one client at a time: stop any other software
+  connected to it (Home Assistant, another Gladys).
+- This integration is **not** the reading of Visonic wireless detectors
+  through an RFXCOM or RFPlayer receiver: it talks to the panel itself.
 
 ## What you get
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+- **Visonic panel**:
+  - **State**, read-only: disarmed, arming (exit delay), entry delay, armed
+    (away), armed (stay), programming;
+  - **Armed**, **Ready to arm**, **Trouble**, **Panel tamper**, **Alarm in
+    progress**, **Fire alarm**, **Panel connected**;
+  - three **buttons**: arm away, arm stay, disarm.
+- **One device per zone** (only the ones you list, 1 to 32): open or not
+  (opening, smoke or leak as chosen), or motion (shown 30 seconds, the panel
+  never sends the end of a motion), **tamper**, **low battery**, **alarm**,
+  **bypassed**.
+- **Scene triggers**: alarm triggered (its kind: intrusion, fire, panic,
+  emergency, gas or flood, and the zone when the panel gives it), panel
+  armed (mode, asked by Gladys or not), panel disarmed.
+- **Scene actions**: arm (away or stay), disarm.
+
+No command is a switch: a "turn everything off" from a voice assistant,
+HomeKit or a scene can never disarm the alarm. The states are read-only, the
+commands are buttons.
 
 ## Configuration
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+1. **Address of the network adapter**: its IP address.
+2. **TCP port of the adapter**: the port of its "TCP server" mode, as set in
+   its own web page.
+3. **User code** (optional): the 4-digit code of a panel user, needed only
+   for the commands; the states need none.
+4. **Zones**: for example `1-6, 7:motion, 9:smoke, 10:leak`. Kinds: `opening`
+   (default), `motion`, `smoke`, `leak`. Changing the kind of a zone already
+   created in Gladys adds a new feature and keeps the old one (and its
+   history): delete the old one by hand if you no longer want it.
+5. **Safety**: see below.
+6. **Language of the names**: French or English.
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+The user code is a secret field: kept by Gladys in its database, never shown
+again in the interface, sent only to the panel. It never appears in the logs
+nor in `/data`.
 
-## Actions
+The **Test the connection** button tells what the connection knows (the
+state of the panel, or why it is not connected and when the next try comes).
+It never connects sooner than the waits between tries allow and sends nothing
+to the panel (its state is read every 25 seconds anyway).
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+The **Allow a new try of the code** button lifts the stop set after a refused
+user code (see "Safety"): the next command sends the code again, once. It
+sends nothing itself.
 
-## Scenes
+## What travels on the network
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+The protocol of the panel has no protection of its own: **everything travels
+in clear text** between Gladys, the adapter and the panel, the user code of
+each command included. Any device of your network listening to the traffic
+can read it, and send commands to the adapter. Protect your network (a
+separate network for the devices you are not sure of), restrict the access
+to the adapter if it allows it, and give Gladys a panel user of its own.
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+## Safety
 
-## Dashboard
+- **Arming is always allowed**, with the user code: it protects. Arming
+  while someone is inside (a badly set scene, a mistake) may raise a false
+  alarm, the sirens and a call of your alarm monitoring company. An arming
+  never lowers the protection: "arm stay" while the panel is armed away
+  sends nothing. While the integration waits between two connection tries,
+  an arming makes one try at once instead of waiting.
+- **Disarming is off by default.** Once the option is checked, **every Gladys
+  user, every scene and the Gladys mobile app can disarm, with the code of
+  the configuration, without typing any code**. Allow it only if your Gladys
+  is well protected (accounts, remote access). The option is read again
+  right before the send: unchecked while a disarm waits, that disarm stops.
+- Before a disarm, the integration **reads the state from the panel again**
+  and decides on that state, never on what it has in memory (already
+  disarmed: nothing is sent). An arm reads it too when it can (already
+  armed: nothing is sent), but an unreadable state never stops an arm.
+- Disarms go one at a time, in order; an arm never waits behind them and
+  withdraws the disarms still waiting.
+- A command that cannot leave in time (slow panel, unreadable state for a
+  disarm) is refused with "nothing was sent". A command is reported done
+  only when the state read back shows it; otherwise it is reported "sent,
+  without confirmation" (or "acknowledged, but the state read back does not
+  show it yet", for example when a zone is open), and the state is read
+  again two seconds later: it is never reported "not sent".
+- **When the panel refuses the user code ("access denied"), the integration
+  never sends it again by itself**, even after a restart (wrong codes may
+  lock the keypads or be reported to your monitoring company). The states
+  keep coming. Change the code in the configuration, or click "Allow a new
+  try of the code". A refusal that comes late stops the commands too. The
+  file `/data/visonic-state.json` keeps only the date of the stop and of the
+  last connection attempt, never the code.
+- Every command, sent or refused, is written in the integration logs; the
+  code never is.
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+## Connection
 
-## Troubleshooting
+- Standard mode of pyvisonic only: the integration never downloads the
+  memory of the panel (no download code needed) and never enrols itself as
+  a Powerlink accessory.
+- The state is read every 25 seconds when nothing else happens, every
+  status of the panel is read about every 5 minutes; with nothing received
+  for 2 minutes, the integration reconnects.
+- On a cut, the new tries are spaced: 10 s, 30 s, 1 min, 2 min, then every 5
+  minutes, and these waits hold across a restart of the integration.
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+## Known limits
+
+- Never tested with a real device (see above).
+- **One panel state, no partitions**: the commands act on every partition
+  (as pyvisonic does when none is given) and the state shown is the one the
+  panel reports without partitions. With partitions enabled, the state may
+  be wrong: tell us.
+- Zones 1 to 32 only (the status messages of Standard mode); no zone names
+  (the zones are named "Zone n", rename them in Gladys).
+- PowerMaster panels send more (B0 messages) that this version does not read;
+  their zone states may come late or not at all.
+- An alarm in Standard mode is seen through a flag of the panel and its
+  events: an alarm the panel never ends is cleared after 20 minutes.
+- No identity of the panel can be read without its download code: if the
+  address of the adapter goes to another adapter (a new DHCP lease), the
+  integration cannot tell. Give the adapter a fixed address.
+- An alarm already in progress when the integration starts fires no scene
+  (only the changes seen do).
+
+## Privacy
+
+Everything stays on your network: the integration only talks to the
+adapter.
+
+## Licence
+
+Apache-2.0. Protocol logic ported from pyvisonic 4.0.8 (MIT, davesmeghead):
+see `THIRD_PARTY_NOTICES.md`.

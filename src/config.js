@@ -1,45 +1,98 @@
 // -----------------------------------------------------------------------------
-// Integration configuration.
-//
-// The configuration is filled in by the user in Gladys, from the `config_schema`
-// declared in `gladys-assistant-integration.json`. The SDK fetches it for you
-// (`gladys.getConfig()`) and notifies you of every change through
-// `gladys.onConfigUpdated()`.
-//
-// This module only provides defaults and normalizes the received object, so the
-// rest of the code never has to deal with `undefined`.
+// The configuration of the manifest `config_schema`, normalized.
 // -----------------------------------------------------------------------------
 
-// Defaults: they MUST stay consistent with the `default` values declared in the
-// `config_schema` of the manifest.
-export const DEFAULT_CONFIG = {
-  latitude: 48.8566, // Paris
-  longitude: 2.3522,
-  unit: 'celsius', // 'celsius' | 'fahrenheit'
-  // Seconds between two reads of the polled sensors. Gladys polls at most once
-  // a minute: slower intervals are applied by skipping polls (see
-  // createPoller in src/devices/index.js).
-  poll_frequency: 300,
-  // Reserved key (NOT in config_schema): because the manifest declares both
-  // 'local' and 'cloud' in its `transports` field, Gladys shows a standard
-  // "Prefer the local connection" toggle and sends the user's choice here.
-  // Read-only for the integration; defaults to true.
-  GLADYS_PREFER_LOCAL: true,
+import { LIMITS, ZONE_KINDS } from './constants.js';
+import { isUserCode } from './visonic/protocol.js';
+
+/** Defaults, mirrored by the manifest (checked by test/manifest.test.js). */
+export const DEFAULTS = {
+  allow_disarm: false,
+  language: 'fr',
+};
+
+export const LANGUAGES = ['fr', 'en'];
+
+const bool = (value, fallback) => (typeof value === 'boolean' ? value : fallback);
+
+const integer = (value, min, max) => {
+  const text = String(value ?? '').trim();
+  if (!/^\d{1,5}$/.test(text)) return undefined;
+  const number = Number(text);
+  return number >= min && number <= max ? number : undefined;
+};
+
+/** `192.168.1.40`, `adapter.lan:10628`, `tcp://192.168.1.40` -> { host, port? }. */
+export function parseHost(raw) {
+  let text = String(raw ?? '').trim();
+  text = text.replace(/^[a-z]+:\/\//i, '').replace(/\/.*$/, '');
+  const match = /^(\[[0-9a-f:.]+\]|[^:\s]+)(?::(\d{1,5}))?$/i.exec(text);
+  if (!match || text.length > 253) return { host: '' };
+  const port = match[2] ? Number(match[2]) : undefined;
+  return {
+    host: match[1].replace(/^\[|\]$/g, ''),
+    port: port >= 1 && port <= 65535 ? port : undefined,
+  };
+}
+
+/** The user code: exactly 4 digits, '' when absent or malformed. */
+export const normalizeCode = (raw) => {
+  const text = String(raw ?? '').trim();
+  return isUserCode(text) ? text : '';
 };
 
 /**
- * Merge the user config with the defaults.
- * @param {Record<string, unknown>} raw config returned by the SDK
+ * `1-4, 7, 9:motion` -> Map(zone -> kind or undefined). Entries are
+ * separated by commas, semicolons or new lines; `=` works like `:`. Wrong
+ * entries are reported, not fatal.
  */
+export function parseZones(raw, max = LIMITS.maxZones) {
+  const zones = new Map();
+  const errors = [];
+  // Bounded: a configuration field is short; anything longer is cut.
+  for (const entry of String(raw ?? '')
+    .slice(0, 2000)
+    .split(/[,;\n]+/)) {
+    const text = entry.trim();
+    if (text === '') continue;
+    const match = /^(\d{1,3})(?:\s*-\s*(\d{1,3}))?(?:\s*[:=]\s*([a-z]+))?$/i.exec(text);
+    const kind = match?.[3]?.toLowerCase();
+    const from = Number(match?.[1]);
+    const to = match?.[2] ? Number(match[2]) : from;
+    if (
+      !match ||
+      from < 1 ||
+      to > max ||
+      to < from ||
+      (kind !== undefined && !ZONE_KINDS.includes(kind))
+    ) {
+      errors.push(text.slice(0, 40));
+      continue;
+    }
+    for (let n = from; n <= to; n += 1) zones.set(n, kind ?? zones.get(n));
+  }
+  return { zones, errors };
+}
+
 export function normalizeConfig(raw = {}) {
+  const { host, port: hostPort } = parseHost(raw?.host);
+  const language = String(raw?.language ?? DEFAULTS.language)
+    .trim()
+    .toLowerCase();
+  const typedCode = String(raw?.user_code ?? '').trim();
+  const zones = parseZones(raw?.zones);
   return {
-    ...DEFAULT_CONFIG,
-    ...raw,
-    // Force the types: config may arrive as strings from a form.
-    latitude: Number(raw.latitude ?? DEFAULT_CONFIG.latitude),
-    longitude: Number(raw.longitude ?? DEFAULT_CONFIG.longitude),
-    poll_frequency: Number(raw.poll_frequency ?? DEFAULT_CONFIG.poll_frequency),
-    // The preference is a boolean; anything but an explicit false means true.
-    GLADYS_PREFER_LOCAL: raw.GLADYS_PREFER_LOCAL !== false,
+    host,
+    // A port typed with the address wins over the port field.
+    port: hostPort ?? integer(raw?.port, 1, 65535),
+    code: normalizeCode(typedCode),
+    codeInvalid: typedCode !== '' && normalizeCode(typedCode) === '',
+    zones: new Map([...zones.zones.entries()].sort(([a], [b]) => a - b)),
+    zoneErrors: zones.errors,
+    allowDisarm: bool(raw?.allow_disarm, DEFAULTS.allow_disarm),
+    language: LANGUAGES.includes(language) ? language : DEFAULTS.language,
   };
 }
+
+/** What the session depends on: a change reconnects. Neither the code nor the zones are in it. */
+export const sessionKey = (config) => JSON.stringify([config.host, config.port]);
