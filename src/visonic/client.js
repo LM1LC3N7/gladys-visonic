@@ -3,7 +3,9 @@
 // or Wi-Fi) wired to the serial port of a Visonic PowerMax or PowerMaster
 // panel, in Standard mode, ported from pyvisonic 4.0.8 (MIT, see
 // THIRD_PARTY_NOTICES.md): the acknowledge of every panel message that wants
-// one (`py_visonic_protocol_base.py`), the status request that proves the
+// one (`py_visonic_protocol_base.py`), one write queue with at least 190 ms
+// between two frames, acknowledges included (`py_visonic_despatcher.py`,
+// `py_const.py`: "the panel can't cope"), the status request that proves the
 // link (its connection test: a checksum-checked status reply, an
 // acknowledge alone is not enough), the status request when the line is
 // idle for 25 s and the 120 s watchdog (`py_visonic_sequencer.py`), the
@@ -18,13 +20,17 @@
 //
 // Changed from pyvisonic: one request at a time with the answer it expects
 // (a status reply after the write, or the acknowledge / denial of a
-// command); a command is never written after its deadline and its own check
-// is run right before the write; after a command timed out, an acknowledge
-// is ambiguous for 10 s; a command is never written while the acknowledge
-// of a status request may still come (it would pass for the command's);
-// reconnection with growing waits (10 s to 5 min); a flood or too many
-// malformed frames cut the link; the user code is never logged (requests are
-// logged by a label).
+// command); a protective request (an arm) goes ahead of the others and
+// preempts a status read or an unacknowledged disarm in flight; a request
+// is never written after its deadline and its own check is run right before
+// the write; after a command or a read timed out, an acknowledge is
+// ambiguous for 10 s; a command is never written while the acknowledge of a
+// status request may still come (it would pass for the command's); what
+// the adapter sends in the first 500 ms of a connection (bytes it kept
+// while no client was there) is acknowledged but never read; reconnection
+// with growing waits (10 s to 5 min); a flood or too many malformed frames
+// cut the link; the user code is never logged (requests are logged by a
+// label).
 //
 // Events: 'up' { status }, 'down' { reason, retryIn, wasUp, silent },
 // 'status' (an A5 message, decoded), 'events' ([{ zone, type }] of an A7),
@@ -59,7 +65,8 @@ const ACK_OWED = 500;
  * `withdrawn` (its check failed right before the write, or it was withdrawn
  * from the queue, nothing sent), `timeout` (sent, no answer), `lost` (the
  * connection ended while it waited), `denied` (the panel answered "access
- * denied"), `ambiguous` (an answer that may belong to an earlier command).
+ * denied"), `ambiguous` (an answer that may belong to an earlier command),
+ * `preempted` (a protective command took the line; sent or not, as it was).
  * `sent` tells whether the request may have reached the panel.
  */
 export class VisonicError extends Error {
@@ -93,15 +100,22 @@ export class VisonicClient extends EventEmitter {
     this.closedAt = undefined;
     this.queue = [];
     this.inflight = undefined;
+    /** Frames waiting for their slot on the line: acknowledges, then one request. */
+    this.out = [];
+    this.outTimer = undefined;
+    this.lastWriteAt = 0;
     this.reconnectTimer = undefined;
     this.connectTimer = undefined;
+    this.settleTimer = undefined;
     this.ticker = undefined;
     this.uncertainUntil = 0;
     this.pendingLate = 0;
     this.ackOwedUntil = 0;
     this.drops = { count: 0, reasons: {}, loggedAt: undefined };
     this.dropRun = 0;
+    this.loopbacks = { count: 0, loggedAt: undefined };
     this.nextAttemptAt = undefined;
+    this.lastWakeAt = undefined;
   }
 
   configure({ host, port }) {
@@ -117,10 +131,16 @@ export class VisonicClient extends EventEmitter {
     return Boolean(this.socket);
   }
 
-  /** A late answer (of a command that timed out, or got an ambiguous one) may still come. */
+  /** A late answer (of a request that timed out or was preempted) may still come. */
   get uncertain() {
     if (this.pendingLate > 0 && this.now() >= this.uncertainUntil) this.pendingLate = 0;
     return this.pendingLate > 0;
+  }
+
+  /** An answer of a request that will never get it may still come: the next ones are ambiguous. */
+  markLate() {
+    this.pendingLate += 1;
+    this.uncertainUntil = this.now() + TIMINGS.uncertain;
   }
 
   /**
@@ -151,11 +171,15 @@ export class VisonicClient extends EventEmitter {
 
   /**
    * A protective command (an arm) while the client waits between two
-   * attempts: one attempt now, outside the waits. Returns whether one was
-   * started (never a second socket).
+   * attempts: one attempt now, outside the waits, at most one per
+   * sessionGap. Returns whether one was started (never a second socket).
    */
   wake() {
     if (!this.running || this.socket) return false;
+    if (this.lastWakeAt !== undefined && this.now() - this.lastWakeAt < TIMINGS.sessionGap) {
+      return false;
+    }
+    this.lastWakeAt = this.now();
     if (this.reconnectTimer) this.timers.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
     this.open();
@@ -175,15 +199,17 @@ export class VisonicClient extends EventEmitter {
 
   /** Ends the socket; every waiting request fails (sent or not, as it was). */
   close() {
-    if (this.connectTimer) this.timers.clearTimeout(this.connectTimer);
-    this.connectTimer = undefined;
+    for (const name of ['connectTimer', 'settleTimer', 'owedTimer', 'outTimer']) {
+      if (this[name]) this.timers.clearTimeout(this[name]);
+      this[name] = undefined;
+    }
     if (this.ticker) this.timers.clearInterval(this.ticker);
     this.ticker = undefined;
-    if (this.owedTimer) this.timers.clearTimeout(this.owedTimer);
-    this.owedTimer = undefined;
+    this.out = [];
     const socket = this.socket;
     this.socket = undefined;
     this.ready = false;
+    this.settling = false;
     const inflight = this.inflight;
     this.inflight = undefined;
     if (inflight) {
@@ -246,7 +272,14 @@ export class VisonicClient extends EventEmitter {
       this.connectTimer = undefined;
       this.lastReceived = this.now();
       this.lastSent = this.now();
-      this.run(generation);
+      // What comes now may be old bytes the adapter kept while no client
+      // was there: acknowledged, never read (see frame()).
+      this.settling = true;
+      this.settleTimer = this.timers.setTimeout(() => {
+        this.settleTimer = undefined;
+        this.settling = false;
+        if (generation === this.generation) this.run(generation);
+      }, TIMINGS.connectSettle);
     });
     socket.on('data', (chunk) => {
       if (generation !== this.generation) return;
@@ -303,6 +336,7 @@ export class VisonicClient extends EventEmitter {
     if (generation !== this.generation || !this.socket) return;
     const now = this.now();
     this.logDrops();
+    this.logLoopbacks();
     if (now - this.lastReceived > TIMINGS.watchdog) {
       this.logger.warn('Visonic: nothing received for too long, reconnecting');
       this.lost(generation, 'no answer from the panel');
@@ -314,6 +348,7 @@ export class VisonicClient extends EventEmitter {
       this.request(full ? STATUS_ALL : STATUS_SYSTEM, {
         label: 'keep-alive status',
         expect: 'system',
+        timeout: TIMINGS.internalRead,
       }).catch(() => undefined);
     }
   }
@@ -360,6 +395,26 @@ export class VisonicClient extends EventEmitter {
     drops.loggedAt = this.now();
   }
 
+  /** 0x0B: one line, then a count once per period. */
+  loopback() {
+    const l = this.loopbacks;
+    if (l.loggedAt === undefined) {
+      this.logger.warn('Visonic: 0x0B received (an adapter that echoes, or a stop of the panel)');
+      l.loggedAt = this.now();
+      return;
+    }
+    l.count += 1;
+    this.logLoopbacks();
+  }
+
+  logLoopbacks() {
+    const l = this.loopbacks;
+    if (l.count === 0 || this.now() - l.loggedAt < TIMINGS.rejectLog) return;
+    this.logger.warn(`Visonic: ${l.count} more 0x0B received`);
+    l.count = 0;
+    l.loggedAt = this.now();
+  }
+
   /** Too many frames in one second: a flood or a loop, not a panel. */
   flooding(generation) {
     const now = this.now();
@@ -375,6 +430,12 @@ export class VisonicClient extends EventEmitter {
     if (this.flooding(generation)) return;
     if (needsAck(type)) this.writeAck(generation);
     if (generation !== this.generation) return;
+    if (this.settling) {
+      this.logger.debug(
+        `Visonic: message ${hex(type)} at connection, not read (kept by the adapter?)`,
+      );
+      return;
+    }
     if (type === TYPE.STATUS) {
       const status = decodeStatus(data);
       if (!status) {
@@ -400,20 +461,55 @@ export class VisonicClient extends EventEmitter {
       return;
     }
     if (type === TYPE.LOOPBACK) {
-      this.logger.warn('Visonic: 0x0B received (an adapter that echoes, or a stop of the panel)');
+      this.loopback();
       return;
     }
     this.logger.debug(`Visonic: message ${hex(type)} not used`);
   }
 
-  /** Our acknowledge, written at once, outside the queue. */
+  // --- The line: one write queue, 190 ms between two frames ---------------------
+
+  /** Our acknowledge: ahead of the requests, in its turn on the line. */
   writeAck(generation) {
     if (generation !== this.generation || !this.socket) return;
+    const at = this.out.findIndex((item) => !item.ack);
+    const item = { ack: true, generation };
+    if (at < 0) this.out.push(item);
+    else this.out.splice(at, 0, item);
+    this.drain();
+  }
+
+  /** Writes the next frame when its slot comes (pyvisonic: 190 ms PowerMax, 150 ms PowerMaster). */
+  drain() {
+    while (!this.outTimer && this.socket && this.out.length > 0) {
+      const wait = this.lastWriteAt + TIMINGS.frameSpacing - this.now();
+      if (wait > 0) {
+        this.outTimer = this.timers.setTimeout(() => {
+          this.outTimer = undefined;
+          this.drain();
+        }, wait);
+        return;
+      }
+      const item = this.out.shift();
+      if (item.ack) {
+        if (item.generation !== this.generation) continue;
+        if (!this.put(encodeFrame(ACK), item.generation)) return;
+      } else {
+        item.write();
+      }
+    }
+  }
+
+  /** One frame on the socket; false when the session ended. */
+  put(bytes, generation) {
     try {
-      this.socket.write(encodeFrame(ACK));
+      this.socket.write(bytes);
     } catch (err) {
       this.lost(generation, err.message);
+      return false;
     }
+    this.lastWriteAt = this.now();
+    return !this.overflowing(generation);
   }
 
   /**
@@ -421,7 +517,7 @@ export class VisonicClient extends EventEmitter {
    * `system`: a status reply; `ack` / `denied`: what a command waits for.
    */
   answer(kind, value) {
-    const entry = this.inflight;
+    const entry = this.inflight?.written ? this.inflight : undefined;
     if (kind === 'ack' && entry?.expect === 'system') {
       entry.ackSeen = true;
       return;
@@ -448,7 +544,7 @@ export class VisonicClient extends EventEmitter {
       if (!entry.ackSeen) this.ackOwedUntil = this.now() + ACK_OWED;
       entry.resolve(value);
     } else if (this.uncertain) {
-      // It may answer an earlier command; this one's answer may still come.
+      // It may answer an earlier request; this one's answer may still come.
       this.uncertainUntil = this.now() + TIMINGS.uncertain;
       const err = new VisonicError(`Ambiguous answer to ${entry.label}`, 'ambiguous', {
         sent: true,
@@ -473,9 +569,10 @@ export class VisonicClient extends EventEmitter {
    * or 'ack' (`expect: 'ack'`). `label` replaces the bytes in the logs (a
    * command holds the user code). `sendBy` (a time): never written after it.
    * `answerBy` (a time): the answer is awaited up to it. `check()`: run right
-   * before the write, false withdraws the request (nothing sent). `first`:
-   * goes ahead of the queue (a protective command). `kind`: a tag that
-   * `withdraw()` can match.
+   * before the write, false withdraws the request (nothing sent).
+   * `protective` (an arm): ahead of every other request, in order among
+   * protective ones, and it preempts a non-protective request in flight.
+   * `kind`: a tag that `withdraw()` can match.
    */
   request(
     bytes,
@@ -488,7 +585,7 @@ export class VisonicClient extends EventEmitter {
       answerBy,
       check,
       onWrite,
-      first = false,
+      protective = false,
       kind,
     } = {},
   ) {
@@ -502,9 +599,11 @@ export class VisonicClient extends EventEmitter {
         expect,
         label,
         timeout,
+        sendBy,
         answerBy,
         check,
         onWrite,
+        protective,
         kind,
         resolve,
         reject,
@@ -525,10 +624,34 @@ export class VisonicClient extends EventEmitter {
           this.pump();
         }, wait);
       }
-      if (first) this.queue.unshift(entry);
-      else this.queue.push(entry);
+      if (protective) {
+        const at = this.queue.findIndex((e) => !e.protective);
+        if (at < 0) this.queue.push(entry);
+        else this.queue.splice(at, 0, entry);
+        this.preempt();
+      } else {
+        this.queue.push(entry);
+      }
       this.pump();
     });
+  }
+
+  /**
+   * A protective request waits behind nothing it may take the line from: a
+   * status read in flight is dropped (its answer, if it comes, answers the
+   * next read), a disarm written and not acknowledged yet is reported "sent,
+   * without confirmation" (its late answer is ambiguous for the next one).
+   */
+  preempt() {
+    const entry = this.inflight;
+    if (!entry || entry.protective) return;
+    this.timers.clearTimeout(entry.timer);
+    this.inflight = undefined;
+    if (entry.written && (entry.expect === 'ack' || !entry.ackSeen)) this.markLate();
+    this.logger.debug(`Visonic: ${entry.label} preempted by a protective command`);
+    entry.reject(
+      new VisonicError(`${entry.label} preempted by an arm`, 'preempted', { sent: entry.written }),
+    );
   }
 
   /** Withdraws the queued (never the written) requests of a kind; how many. */
@@ -540,6 +663,13 @@ export class VisonicClient extends EventEmitter {
       this.timers.clearTimeout(entry.deadline);
       entry.reject(new VisonicError(`${entry.label} withdrawn`, 'withdrawn'));
       count += 1;
+    }
+    if (this.inflight && this.inflight.kind === kind && !this.inflight.written) {
+      const entry = this.inflight;
+      this.inflight = undefined;
+      entry.reject(new VisonicError(`${entry.label} withdrawn`, 'withdrawn'));
+      count += 1;
+      this.pump();
     }
     return count;
   }
@@ -562,16 +692,31 @@ export class VisonicClient extends EventEmitter {
     }
     this.queue.shift();
     this.timers.clearTimeout(entry.deadline);
+    // In flight from now: it waits for its slot on the line.
+    this.inflight = entry;
     const generation = this.generation;
+    this.out.push({ ack: false, write: () => this.writeRequest(entry, generation) });
+    this.drain();
+  }
+
+  /** The slot of a request on the line came: last checks, then the write. */
+  writeRequest(entry, generation) {
+    if (generation !== this.generation || this.inflight !== entry) return;
+    const fail = (err) => {
+      this.inflight = undefined;
+      entry.reject(err);
+      this.pump();
+    };
+    if (entry.sendBy !== undefined && this.now() > entry.sendBy) {
+      fail(new VisonicError(`${entry.label} not sent in time`, 'late'));
+      return;
+    }
     // Last look before the socket: a command whose check fails (option off,
     // code changed, deadline passed) is withdrawn, never written.
     if (entry.check && !entry.check()) {
-      entry.reject(new VisonicError(`${entry.label} withdrawn before the write`, 'withdrawn'));
-      this.pump();
+      fail(new VisonicError(`${entry.label} withdrawn before the write`, 'withdrawn'));
       return;
     }
-    const bytes = encodeFrame(entry.bytes);
-    this.inflight = entry;
     this.logger.debug(`Visonic <- ${entry.label}`);
     entry.written = true;
     this.lastSent = this.now();
@@ -582,22 +727,14 @@ export class VisonicClient extends EventEmitter {
     } catch {
       // A bookkeeping callback never stops the write.
     }
-    try {
-      this.socket.write(bytes);
-    } catch (err) {
-      this.lost(generation, err.message);
-      return;
-    }
-    if (this.overflowing(generation)) return;
+    if (!this.put(encodeFrame(entry.bytes), generation)) return;
     entry.timer = this.timers.setTimeout(() => {
       if (this.inflight !== entry) return;
       this.inflight = undefined;
       this.timeouts += 1;
-      if (entry.expect === 'ack') {
-        // A late answer may still come: for a while, an answer is not trusted.
-        this.pendingLate += 1;
-        this.uncertainUntil = this.now() + TIMINGS.uncertain;
-      }
+      // A late answer may still come: for a while, an answer is not trusted
+      // (the acknowledge of a read that timed out too).
+      if (entry.expect === 'ack' || !entry.ackSeen) this.markLate();
       entry.reject(new VisonicError(`No answer to ${entry.label}`, 'timeout', { sent: true }));
       if (this.timeouts >= LIMITS.maxTimeouts) {
         this.lost(generation, 'no answer from the panel');

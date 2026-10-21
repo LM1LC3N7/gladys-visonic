@@ -119,6 +119,10 @@ export const T = {
     en: `The panel is in programming (installer menu or download)${nothing.en}`,
     fr: `La centrale est en programmation (menu installateur ou téléchargement)${nothing.fr}`,
   },
+  armCovered: {
+    en: `An arming at least as strong was just sent, or the panel is already armed so${nothing.en}`,
+    fr: `Un armement au moins aussi fort vient d'être envoyé, ou la centrale est déjà armée ainsi${nothing.fr}`,
+  },
   restarted: {
     en: `The connection to the panel restarted while the command was being prepared${nothing.en}`,
     fr: `La connexion à la centrale a redémarré pendant la préparation de la commande${nothing.fr}`,

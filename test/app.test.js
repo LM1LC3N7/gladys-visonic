@@ -219,7 +219,8 @@ test('arm is protective: sent even when the state cannot be read', async (t) => 
   const pressed = ctx.press('arm-away');
   await until(() => ctx.panel.commands.length === 1, 4_000);
   holdReads = false;
-  fails(await pressed, /Sent to the panel/);
+  // Written blind; the reads answer again: confirmed by the state read back.
+  ok(await pressed);
 });
 
 test('disarm: off by default, nothing sent, nothing read', async (t) => {
@@ -319,7 +320,8 @@ test('a refused code stops the commands, across restarts, until a click or a new
   fails(await ctx.press('arm-away'), /refused this user code before/);
   assert.equal(ctx.panel.commands.length, 1, 'never sent again by itself');
 
-  // A restart (same code) keeps the stop.
+  // A restart (same code), 30 s later, keeps the stop.
+  await store.save({ ...store.data, lastAttemptAt: Date.now() - 30_000 });
   const again = await setup(t, { config: { user_code: '9999' }, store });
   await up(again);
   fails(await again.press('arm-away'), /refused this user code before/);

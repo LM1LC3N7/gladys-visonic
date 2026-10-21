@@ -73,6 +73,12 @@ export const TIMINGS = {
   requestTimeout: 5_000,
   /** The first status after connecting: the panel may be slow to answer. */
   firstStatusTimeout: 10_000,
+  /** A keep-alive or a read back: a short wait, it never holds the line for long. */
+  internalRead: 1_500,
+  /** Between two frames written, acknowledges included (pyvisonic: 190 ms PowerMax, 150 ms PowerMaster). */
+  frameSpacing: 190,
+  /** What the adapter sends in the first moments of a connection is not read (bytes it kept). */
+  connectSettle: 500,
   /** A status request when the line is idle this long (pyvisonic KEEP_ALIVE_PERIOD, 25 s). */
   keepAlive: 25_000,
   /** Nothing received for this long while connected: the link is dead (pyvisonic, 120 s). */
@@ -96,6 +102,8 @@ export const TIMINGS = {
    * answerBy (then "sent, not confirmed").
    */
   readBy: 2_500,
+  /** An arm reads the state by this time, so that its write still fits (the line spaces frames). */
+  armReadBy: 1_500,
   sendBy: 3_500,
   answerBy: 4_500,
   /** The state is read again this long after a command. */

@@ -100,10 +100,16 @@ to the adapter if it allows it, and give Gladys a panel user of its own.
   right before the send: unchecked while a disarm waits, that disarm stops.
 - Before a disarm, the integration **reads the state from the panel again**
   and decides on that state, never on what it has in memory (already
-  disarmed: nothing is sent). An arm reads it too when it can (already
-  armed: nothing is sent), but an unreadable state never stops an arm.
-- Disarms go one at a time, in order; an arm never waits behind them and
-  withdraws the disarms still waiting.
+  disarmed: nothing is sent; a state the integration does not know: refused,
+  nothing is sent). An arm reads it too when it can (already armed as much:
+  nothing is sent). When the state cannot be read, "arm away" is sent anyway
+  (it never lowers anything), "arm stay" only if the last state known
+  protects less, otherwise it is refused with "nothing was sent".
+- Disarms go one at a time, in order. An arm never waits behind them: it
+  withdraws the disarms still waiting, and takes the line from a state read
+  or a disarm already sent and not acknowledged yet (that disarm is then
+  reported "sent, without confirmation"). Arms go one at a time: an arm
+  asked right after a stronger one sends nothing.
 - A command that cannot leave in time (slow panel, unreadable state for a
   disarm) is refused with "nothing was sent". A command is reported done
   only when the state read back shows it; otherwise it is reported "sent,
@@ -129,7 +135,8 @@ to the adapter if it allows it, and give Gladys a panel user of its own.
   status of the panel is read about every 5 minutes; with nothing received
   for 2 minutes, the integration reconnects.
 - On a cut, the new tries are spaced: 10 s, 30 s, 1 min, 2 min, then every 5
-  minutes, and these waits hold across a restart of the integration.
+  minutes, and these waits hold across a restart of the integration (after
+  a session that worked, a restart waits 25 seconds).
 
 ## Known limits
 
@@ -147,8 +154,13 @@ to the adapter if it allows it, and give Gladys a panel user of its own.
 - No identity of the panel can be read without its download code: if the
   address of the adapter goes to another adapter (a new DHCP lease), the
   integration cannot tell. Give the adapter a fixed address.
-- An alarm already in progress when the integration starts fires no scene
-  (only the changes seen do).
+- An alarm already in progress when the integration starts fires the
+  "alarm triggered" scene once (a duplicate is better than a missed alarm).
+  The same kind of alarm fires it at most once every 30 seconds.
+- What the adapter sends in the first half second of a connection (bytes it
+  may have kept while no client was connected) is acknowledged but not
+  read. Frames are written at least 190 ms apart, as pyvisonic does (the
+  panel cannot cope with faster).
 
 ## Privacy
 

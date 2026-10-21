@@ -57,4 +57,24 @@ the notes of the version's GitHub Release.
 - Bounded frames, linear parsing with a running checksum; a flood or too
   many malformed frames cut the link; no control byte in the files (test).
 
+### Fixed
+
+- An arm is never held behind a status read without answer or a disarm not
+  acknowledged: it takes the line (review 1).
+- An arm stay on an unreadable state never lowers an arm away; two arms at
+  once never end on the weaker one.
+- A disarm on a state the integration does not know is refused.
+- Bytes the adapter may have kept before the connection are never read as
+  the current state.
+- Frames written at least 190 ms apart (pyvisonic), acknowledges included.
+- F1, F4 and E1 frames are cut by their length (pyvisonic); an acknowledge
+  or an access denied is never lost inside a broken frame.
+- One `alarm_triggered` per kind per 30 s at most; an alarm already in
+  progress at start is announced; 0x0B logged once a minute.
+- "Code refused" when the panel acknowledges then refuses; an ambiguous
+  acknowledge is decided by the state read back; a command whose session
+  changed is never reported done; a restart after a working session waits
+  25 s; at most one wake per 5 s; old states never published by a new
+  session.
+
 [Unreleased]: https://github.com/LM1LC3N7/gladys-visonic/commits/main

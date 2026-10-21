@@ -84,7 +84,28 @@ export const FIXED_LENGTHS = {
   0xac: 15, // switch names
   0xad: 15, // image management
   0xe0: 11, // proxy
+  0xe1: 7, // proxy command ringback
+  0xf1: 9, // PowerMax+ only, its checksum is always wrong (pyvisonic ignores it)
 };
+
+/** Types whose checksum pyvisonic ignores: cut by their length, the footer checked, never read. */
+const NO_CHECKSUM = new Set([0xf1, 0xf4]);
+
+/**
+ * F4 (camera images of PowerMaster panels): the length depends on the
+ * subtype (byte 2): 01 is 9 bytes, 03 and 05 are 9 + the byte at index 5,
+ * 15 is 12 bytes (pyvisonic pmReceiveMsg[IMAGE_DATA]); another subtype is
+ * taken as 9 bytes.
+ */
+const F4 = {
+  0x01: { base: 9 },
+  0x03: { base: 9, at: 5 },
+  0x05: { base: 9, at: 5 },
+  0x15: { base: 12 },
+};
+
+/** The short messages that must never be lost inside a broken frame: acknowledge and access denied. */
+const RESCUED = new Set([0x02, 0x08]);
 
 /**
  * Types whose length is in the frame: total = base + the byte at `at`
@@ -163,14 +184,17 @@ export class FrameReader {
       this.sum = b;
       if (b in FIXED_LENGTHS) this.expected = FIXED_LENGTHS[b];
       else if (b in VARIABLE_LENGTHS) this.expected = VARIABLE_LENGTHS[b].base;
+      else if (b === 0xf4) this.expected = F4[0x01].base;
       else this.unknown = true;
       return;
     }
     buffer.push(b);
     this.sum += b;
     const type = buffer[1];
-    const variable = VARIABLE_LENGTHS[type];
-    if (variable && buffer.length - 1 === variable.at) {
+    const index = buffer.length - 1;
+    const variable = type === 0xf4 ? F4[buffer[2]] : VARIABLE_LENGTHS[type];
+    if (type === 0xf4 && index === 2) this.expected = (F4[b] ?? F4[0x01]).base;
+    if (variable?.at !== undefined && index === variable.at) {
       this.expected = variable.base + b;
     }
     if (this.expected > 0) {
@@ -181,6 +205,13 @@ export class FrameReader {
       this.emit();
       return;
     }
+    if (this.unknown && b === FOOTER && this.tailIsShort()) {
+      // A frame of an unknown type never swallows an acknowledge or a denial.
+      const short = buffer.slice(-4);
+      this.drop('unknown frame cut by a short message');
+      this.onFrame({ type: short[1], data: Buffer.alloc(0) });
+      return;
+    }
     if (b === FOOTER && !this.unknown && buffer.length >= 4) {
       // A known short message closed by a footer with a wrong checksum.
       this.drop('wrong checksum');
@@ -189,6 +220,35 @@ export class FrameReader {
     if (buffer.length >= (this.unknown ? MAX_FRAME : MAX_SHORT)) {
       this.drop(this.unknown ? 'unknown frame too long' : 'frame too long');
     }
+  }
+
+  /** The last 4 bytes are a whole acknowledge or access denied (0D 02|08 cs 0A, exact checksum). */
+  tailIsShort() {
+    const buffer = this.buffer;
+    const n = buffer.length;
+    if (n <= 4) return false;
+    const [header, type, cs, footer] = buffer.slice(n - 4);
+    return (
+      header === HEADER && RESCUED.has(type) && footer === FOOTER && cs === checksumOfSum(type)
+    );
+  }
+
+  /** The acknowledges and denials inside a broken frame (one more pass over it, bounded). */
+  rescue(bytes) {
+    const found = [];
+    for (let i = 2; i + 3 < bytes.length; i += 1) {
+      const [header, type, cs, footer] = bytes.slice(i, i + 4);
+      if (
+        header === HEADER &&
+        RESCUED.has(type) &&
+        footer === FOOTER &&
+        cs === checksumOfSum(type)
+      ) {
+        found.push(type);
+        i += 3;
+      }
+    }
+    return found;
   }
 
   /** The last byte is a footer and the checksum before it is accepted. */
@@ -202,8 +262,14 @@ export class FrameReader {
   }
 
   finish() {
-    if (this.valid(false)) this.emit();
-    else this.drop(this.buffer.at(-1) === FOOTER ? 'wrong checksum' : 'frame of a wrong length');
+    const buffer = this.buffer;
+    if (NO_CHECKSUM.has(buffer[1]) ? buffer.at(-1) === FOOTER : this.valid(false)) {
+      this.emit();
+      return;
+    }
+    const rescued = this.rescue(buffer);
+    this.drop(buffer.at(-1) === FOOTER ? 'wrong checksum' : 'frame of a wrong length');
+    for (const type of rescued) this.onFrame({ type, data: Buffer.alloc(0) });
   }
 
   emit() {

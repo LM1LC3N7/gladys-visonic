@@ -26,6 +26,8 @@ up to date at the end of every milestone.
       "Test the connection", "Allow a new try of the code"; fr/en. Tested
       against an in-memory panel only (checksum and framing checked against
       pyvisonic's own test vectors).
+- [x] **Review 1 fixes** (2026-10-21, xhigh review of 80f1458: 7 important,
+      12 minor): see "Decisions after review 1" below.
 - [ ] **Milestone 2 - real panel**: run against a real PowerMax (and a
       PowerMaster) behind a serial-to-network adapter; capture real frames
       (anonymised, never a code) as fixtures; fix what differs (see below).
@@ -55,6 +57,14 @@ up to date at the end of every milestone.
 - A7 with a count of 0xFF: only the first pair is read, as pyvisonic does
   without partitions.
 - Zone event 5 (motion) and the 30 s hold of a motion zone.
+- **To confirm**: whether the adapters keep bytes received while no client
+  is connected and send them at the connection (the client ignores, while
+  acknowledging, what comes in the first 500 ms, before its first A2), and
+  whether 500 ms is enough.
+- **To confirm**: that 190 ms between frames (pyvisonic PowerMax value, used
+  for PowerMaster too) is enough, and not too slow for the deadlines.
+- F1 (PowerMax+) and F4 (PowerMaster images): cut by pyvisonic's lengths,
+  never read.
 
 ## Decisions
 
@@ -144,3 +154,46 @@ up to date at the end of every milestone.
 - **Validator**: `npx github:GladysAssistant/integration-store .` cannot be
   run from the development agent: to be run by the main session
   (`validate.ps1`).
+
+## Decisions after review 1
+
+- **I1 Arm preempts**: a protective request goes ahead of the queue (FIFO
+  among arms) and preempts a non-protective request in flight: a status
+  read is dropped, a disarm written and not acknowledged is reported "sent,
+  without confirmation"; their late answers make the next acknowledge
+  ambiguous (the state read back decides). Keep-alive and read back wait
+  1.5 s at most. The arm reads the state by 1.5 s after the request.
+- **I2 Unreadable state**: arm away sent blind; arm stay sent only when the
+  last state known (memory, each A5 04) protects less, else refused,
+  nothing sent.
+- **I3 Arms in order**: an arm chain of their own (never behind disarms),
+  and the check right before the write refuses an arm that the state in
+  memory or an arm written less than 4.5 s ago (not refused) covers.
+- **I4**: a disarm on an unknown system state is refused (raw code logged).
+- **I5**: 500 ms after the TCP connection, frames are acknowledged and
+  never read, then the first A2; after `wake()` the arm reads the state
+  again (the opening status never decides "nothing sent"). To confirm on a
+  real adapter.
+- **I6**: one write queue for acknowledges and requests, 190 ms at least
+  between two frames (pyvisonic PowerMax; PowerMaster 150 ms), the
+  deadline and the check of a request run when its slot comes (M9).
+- **I7**: F1 (9 bytes, checksum ignored), F4 (by subtype), E1 (7 bytes) from
+  pyvisonic; an acknowledge or a denial inside a broken or unknown frame
+  is still read.
+- **Ambiguous acknowledge**: the state read back decides (done if it shows
+  the command, "sent, without confirmation" otherwise); a denial, even
+  ambiguous or after an acknowledge, gives "code refused" (M3) and stops
+  the code.
+- **M1**: one `alarm_triggered` per kind per 30 s at most (the state
+  features follow every change; the dropped ones logged once a minute).
+- **M2**: 0x0B logged once, then counted once a minute. **M4**: a read that
+  timed out without its acknowledge makes the next acknowledge ambiguous.
+  **M5**: the write buffer is checked after every frame, acknowledges too.
+  **M6**: the states still waiting when a session stops are dropped.
+  **M7**: a command whose session changed after its write is never
+  "done". **M8**: after a session that worked, a restart waits 25 s; at
+  most one `wake()` per 5 s. **M10**: an alarm in progress at the first
+  status seen fires `alarm_triggered`.
+- **M11 (not done)**: a fingerprint of the panel from the enrolled zones of
+  A5 06 is left for milestone 2 (an enrolment change would refuse the
+  disarm: to weigh on a real panel).

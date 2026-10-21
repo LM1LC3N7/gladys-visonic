@@ -255,6 +255,9 @@ export class StatePublisher {
       this.timers.clearTimeout(this.timer);
       this.timer = undefined;
     }
+    // The values still waiting belong to the session that stops (maybe
+    // another panel): never sent with the next one.
+    this.pending.clear();
     if (final) {
       for (const timer of this.retries) this.timers.clearTimeout(timer);
       this.retries.clear();

@@ -112,11 +112,18 @@ utilisateur de la centrale qui lui soit propre.
   pendant qu'un désarmement attend, ce désarmement s'arrête.
 - Avant un désarmement, l'intégration **relit l'état sur la centrale** et
   décide sur cet état, jamais sur ce qu'elle a en mémoire (déjà désarmée :
+  rien n'est envoyé ; un état que l'intégration ne connaît pas : refusé,
   rien n'est envoyé). Un armement le relit aussi quand il le peut (déjà
-  armée : rien n'est envoyé), mais un état illisible n'arrête jamais un
-  armement.
-- Les désarmements passent un par un, dans l'ordre ; un armement n'attend
-  jamais derrière eux et retire les désarmements encore en attente.
+  armée au moins autant : rien n'est envoyé). Quand l'état est illisible,
+  « armement total » part quand même (il ne baisse jamais rien), « armement
+  partiel » seulement si le dernier état connu protège moins, sinon il est
+  refusé avec « rien n'a été envoyé ».
+- Les désarmements passent un par un, dans l'ordre. Un armement n'attend
+  jamais derrière eux : il retire les désarmements encore en attente, et
+  prend la ligne à une relecture d'état ou à un désarmement déjà envoyé et
+  pas encore acquitté (ce désarmement est alors annoncé « envoyée, sans
+  confirmation »). Les armements passent un par un : un armement demandé
+  juste après un plus fort n'envoie rien.
 - Une commande qui ne peut pas partir à temps (centrale lente, état
   illisible pour un désarmement) est refusée avec « rien n'a été envoyé ».
   Une commande n'est annoncée faite que lorsque l'état relu la montre ;
@@ -145,7 +152,8 @@ utilisateur de la centrale qui lui soit propre.
   reçu pendant 2 minutes, l'intégration se reconnecte.
 - Après une coupure, les nouveaux essais sont espacés : 10 s, 30 s, 1 min,
   2 min, puis toutes les 5 minutes, et ces attentes tiennent au redémarrage
-  de l'intégration.
+  de l'intégration (après une session qui a fonctionné, un redémarrage
+  attend 25 secondes).
 
 ## Limites connues
 
@@ -166,8 +174,14 @@ utilisateur de la centrale qui lui soit propre.
   téléchargement : si l'adresse de l'adaptateur passe à un autre adaptateur
   (nouveau bail DHCP), l'intégration ne peut pas le voir. Donnez à
   l'adaptateur une adresse fixe.
-- Une alarme déjà en cours au démarrage de l'intégration ne déclenche
-  aucune scène (seuls les changements vus le font).
+- Une alarme déjà en cours au démarrage de l'intégration déclenche la scène
+  « alarme déclenchée » une fois (un doublon vaut mieux qu'un oubli). Une
+  même sorte d'alarme la déclenche au plus une fois toutes les 30 secondes.
+- Ce que l'adaptateur envoie pendant la première demi-seconde d'une
+  connexion (des octets qu'il a pu garder pendant qu'aucun client n'était
+  connecté) est acquitté mais pas lu. Les trames sont écrites à 190 ms
+  d'écart au moins, comme le fait pyvisonic (la centrale ne suit pas plus
+  vite).
 
 ## Vie privée
 

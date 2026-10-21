@@ -40,6 +40,8 @@ export class Refused extends Error {}
 const MOTION_HOLD = 30_000;
 /** An alarm the panel never restores is cleared after this (pyvisonic bell time, 20 min). */
 const BELL_TIME = 20 * 60_000;
+/** One alarm_triggered of a kind at most this often (a flapping detector). */
+const ALARM_REPEAT = 30_000;
 
 const emptyAlarm = () => ({ intruder: false, kinds: new Set(), tamper: undefined, zone: null });
 
@@ -79,6 +81,13 @@ export class VisonicApp {
     /** The panel state at the last flush: the transitions start from it. */
     this.seen = undefined;
     this.readBacks = new Set();
+    /** kind -> when its last alarm_triggered was sent. */
+    this.alarmsSent = new Map();
+    this.alarmsCapped = 0;
+    this.alarmsCappedLogAt = undefined;
+    /** { level, at }: the last arm written (an arm as strong never goes after it). */
+    this.lastArm = undefined;
+    this.arms = Promise.resolve();
     this.motionTimers = new Map();
     this.bellTimer = undefined;
     this.lastStatus = undefined;
@@ -184,14 +193,18 @@ export class VisonicApp {
     }
   }
 
-  /** The first connection after a (re)start: never sooner than the last attempt allows. */
+  /**
+   * The first connection after a (re)start: never sooner than the last
+   * attempt allows (after a session that worked: the keep-alive interval, so
+   * a restart loop never reads the panel faster than it).
+   */
   notBefore() {
     const { lastAttemptAt, failures } = this.memory;
     if (!lastAttemptAt) return 0;
     const wait =
       failures > 0
         ? TIMINGS.backoff[Math.min(failures - 1, TIMINGS.backoff.length - 1)]
-        : TIMINGS.sessionGap;
+        : TIMINGS.keepAlive;
     return lastAttemptAt + wait;
   }
 
@@ -516,9 +529,13 @@ export class VisonicApp {
     }
   }
 
-  /** Nothing for the first status seen after a start. */
+  /**
+   * The first status seen after a start gives no armed / disarmed event,
+   * but an alarm already in progress is announced (a duplicate is better
+   * than a missed alarm).
+   */
   transitions(before, after) {
-    if (!before) return [];
+    if (!before) return [...after.kinds].map((kind) => ({ type: 'alarm', kind }));
     const events = [];
     const armed = (mode) => mode === 'armed_away' || mode === 'armed_stay';
     if (before.mode !== after.mode) {
@@ -563,6 +580,20 @@ export class VisonicApp {
     } else if (event.type === 'alarm') {
       const zone = this.model.alarm.zone;
       this.logger.warn(`Panel: ALARM ${event.kind}${zone ? ` zone ${zone}` : ''}`);
+      // A flapping detector or adapter: the same kind at most once per
+      // ALARM_REPEAT (the state features still follow every change).
+      const last = this.alarmsSent.get(event.kind);
+      if (last !== undefined && this.now() - last < ALARM_REPEAT) {
+        this.alarmsCapped += 1;
+        if (this.alarmsCappedLogAt === undefined || this.now() - this.alarmsCappedLogAt >= 60_000) {
+          this.logger.warn(
+            `Scene event alarm_triggered (${event.kind}) repeated: not sent again yet`,
+          );
+          this.alarmsCappedLogAt = this.now();
+        }
+        return;
+      }
+      this.alarmsSent.set(event.kind, this.now());
       await this.publisher.sceneEvent(SCENE_TRIGGERS.ALARM_TRIGGERED, {
         kind: event.kind,
         zone,
@@ -713,16 +744,20 @@ export class VisonicApp {
   }
 
   /** The system status read now; refused (nothing sent) when it cannot be read by readBy. */
-  async freshStatus(asked, { first = false, kind } = {}) {
+  async freshStatus(asked, { protective = false, kind, readBy = asked + TIMINGS.readBy } = {}) {
     if (!this.client.connected) throw this.refused(T.offline);
-    const readBy = asked + TIMINGS.readBy;
     if (readBy - this.now() < 100) throw this.refused(T.tooLate);
     try {
-      return await this.client.readStatus({ sendBy: readBy, answerBy: readBy, first, kind });
+      return await this.client.readStatus({
+        sendBy: readBy,
+        answerBy: readBy,
+        protective,
+        kind,
+      });
     } catch (err) {
       if (err instanceof VisonicError && err.kind === 'late') throw this.refused(T.tooLate);
       if (err instanceof VisonicError && err.kind === 'offline') throw this.refused(T.offline);
-      if (err instanceof VisonicError && err.kind === 'withdrawn') {
+      if (err instanceof VisonicError && (err.kind === 'withdrawn' || err.kind === 'preempted')) {
         throw this.refused(T.disarmWithdrawn);
       }
       throw this.refused(T.stateUnknown);
@@ -731,30 +766,58 @@ export class VisonicApp {
 
   /**
    * Arm away or stay. Protective: never behind a disarm (it withdraws those
-   * still waiting), never blocked by an unreadable state; the user code is
-   * still needed, and a refused one still stops it.
+   * still waiting, and preempts a read or an unacknowledged disarm in
+   * flight), never blocked by an unreadable state nor by the waits between
+   * connection attempts, never lowering the protection; the user code is
+   * still needed, and a refused one still stops it. Arms go one at a time.
    */
-  async arm(mode, asked = this.now()) {
-    if (!ARM_MODES.includes(mode)) throw new Error(`Unknown arming mode ${mode}`);
-    const label = COMMAND_NAMES[mode].en;
-    this.checkCode(mode);
+  arm(mode, asked = this.now()) {
+    if (!ARM_MODES.includes(mode)) return Promise.reject(new Error(`Unknown arming mode ${mode}`));
+    try {
+      this.checkCode(mode);
+    } catch (err) {
+      return Promise.reject(err);
+    }
     this.withdrawDisarms();
+    const run = this.arms.then(
+      () => this.armNow(mode, asked),
+      () => this.armNow(mode, asked),
+    );
+    this.arms = run.catch(() => undefined);
+    return run;
+  }
+
+  async armNow(mode, asked) {
+    const label = COMMAND_NAMES[mode].en;
+    const level = VisonicApp.protection({ mode });
+    this.checkCode(mode);
     const session = this.session;
-    let status;
     if (!this.client.connected) {
       // Waiting between two attempts (a cut, a restart): an arm is never
-      // blocked by those waits, it gets one attempt now.
-      status = await this.wakeForArm(asked);
+      // blocked by those waits, it gets one attempt now. The status that
+      // opens the session is never the decision: it is read again below.
+      await this.wakeForArm(asked);
     }
+    let status;
     try {
-      status ??= await this.freshStatus(asked, { first: true });
+      status = await this.freshStatus(asked, {
+        protective: true,
+        readBy: asked + TIMINGS.armReadBy,
+      });
     } catch (err) {
       if (!(err instanceof Refused) || !this.client.connected) throw err;
-      // Unreadable: an arm protects, it is sent anyway.
+      // Unreadable. An arm away never lowers anything: sent. An arm stay is
+      // sent only when the last state known protects less (it may be armed
+      // away): the memory only ever holds a command back.
+      const known = this.model.system;
+      if (level < 2 && (!known || VisonicApp.protection(known) >= level)) {
+        this.logger.warn(`Arm REFUSED (${label}): the state could not be read`);
+        throw this.refused(T.stateUnknown);
+      }
       this.logger.warn(`Arm: the state could not be read (${err.message}); sent anyway`);
     }
     if (session !== this.session) throw this.refused(T.restarted);
-    if (status && VisonicApp.protection(status) >= VisonicApp.protection({ mode })) {
+    if (status && VisonicApp.protection(status) >= level) {
       // Never "arm stay" over "armed away": that would lower the protection.
       this.logger.info(`Panel already ${status.mode} (${label}): nothing sent`);
       return;
@@ -765,13 +828,25 @@ export class VisonicApp {
     }
     this.checkCode(mode);
     this.logger.info(`ARMING from Gladys: ${label}`);
-    await this.send(mode, asked, { first: true });
+    await this.send(mode, asked, { protective: true });
+  }
+
+  /**
+   * An arm that would not add anything: the state in memory (each A5 04)
+   * or an arm written less than answerBy ago protects as much.
+   */
+  covered(mode) {
+    const level = VisonicApp.protection({ mode });
+    const known = this.model.system;
+    if (known && known.mode !== 'unknown' && VisonicApp.protection(known) >= level) return true;
+    const last = this.lastArm;
+    return Boolean(last && last.level >= level && this.now() - last.at < TIMINGS.answerBy);
   }
 
   /**
    * One connection attempt now for an arm, outside the waits between
-   * attempts; resolves with the status that opened the session, or refuses
-   * (nothing sent) when it is not up by readBy.
+   * attempts (at most one per 5 s); refuses (nothing sent) when the session
+   * is not up by readBy.
    */
   async wakeForArm(asked) {
     if (!this.client.busy) {
@@ -779,21 +854,20 @@ export class VisonicApp {
       this.logger.info('Arm asked while disconnected: one connection attempt now');
     }
     const left = asked + TIMINGS.readBy - this.now();
-    const result = await new Promise((resolve) => {
+    const up = await new Promise((resolve) => {
       const done = (value) => {
         this.client.off('up', onUp);
         this.client.off('down', onDown);
         this.timers.clearTimeout(timer);
         resolve(value);
       };
-      const onUp = ({ status }) => done(status);
-      const onDown = () => done(undefined);
-      const timer = this.timers.setTimeout(() => done(undefined), Math.max(0, left));
+      const onUp = () => done(true);
+      const onDown = () => done(false);
+      const timer = this.timers.setTimeout(() => done(false), Math.max(0, left));
       this.client.on('up', onUp);
       this.client.on('down', onDown);
     });
-    if (!result) throw this.refused(T.offline);
-    return result;
+    if (!up) throw this.refused(T.offline);
   }
 
   /** An arm withdraws every disarm still waiting (queued in the app or in the client). */
@@ -811,8 +885,8 @@ export class VisonicApp {
 
   /**
    * Disarm: off unless allowed; one at a time, in the order asked; decided
-   * on the state read now. A disarm whose own time ran out while it waited
-   * its turn is refused, nothing sent.
+   * on the state read now (an unknown state refuses it). A disarm whose own
+   * time ran out while it waited its turn is refused, nothing sent.
    */
   async disarm(asked = this.now()) {
     const label = COMMAND_NAMES.disarmed.en;
@@ -830,6 +904,12 @@ export class VisonicApp {
       const status = await this.freshStatus(asked, { kind: 'disarm' });
       if (ticket.withdrawn) throw this.refused(T.disarmWithdrawn);
       if (session !== this.session) throw this.refused(T.restarted);
+      if (status.mode === 'unknown') {
+        this.logger.warn(
+          `Disarm REFUSED (${label}): unknown state 0x${status.raw.toString(16).padStart(2, '0')}`,
+        );
+        throw this.refused(T.stateUnknown);
+      }
       if (status.mode === 'disarmed' && !this.alarmOn()) {
         this.logger.info('Panel already disarmed: nothing sent');
         return;
@@ -852,7 +932,7 @@ export class VisonicApp {
    * until it shows it (or answerBy). Resolves when it does; throws Refused
    * when nothing was sent, an Error otherwise ("sent, without confirmation").
    */
-  async send(mode, asked, { first = false, kind, ticket } = {}) {
+  async send(mode, asked, { protective = false, kind, ticket } = {}) {
     const label = COMMAND_NAMES[mode].en;
     const name = word(COMMAND_NAMES[mode], this.language);
     if (this.now() > asked + TIMINGS.sendBy) {
@@ -862,25 +942,41 @@ export class VisonicApp {
     this.check(mode);
     const code = this.config.code;
     const session = this.session;
+    const arming = mode !== 'disarmed';
+    let covered = false;
+    let stoppedBefore = this.codeStopped();
     const onSent = () => {
       this.commanded = { mode, until: this.now() + TIMINGS.commandMemory };
     };
+    const unconfirmed = (why, err) => {
+      this.logger.warn(`Command sent, NOT confirmed (${label}): ${why}`);
+      onSent();
+      this.scheduleReadBack();
+      return this.error(fill(T.unconfirmed, name), err);
+    };
+    let ambiguous = false;
     try {
       await this.client.command(mode, code, {
         sendBy: asked + TIMINGS.sendBy,
         // Absolute: the client waits from the write up to it, whatever was ahead.
         answerBy: asked + TIMINGS.answerBy,
-        first,
+        protective,
         kind,
         // The code of this frame, kept in memory: a late refusal of it stops the commands.
         onWrite: () => {
           if (ticket) ticket.sending = true;
           this.sentWithCode = { code, at: this.now() };
+          stoppedBefore = this.codeStopped();
+          if (arming) this.lastArm = { level: VisonicApp.protection({ mode }), at: this.now() };
         },
         // …and run once more by the client, right before the socket write.
         check: () => {
           if (ticket?.withdrawn || session !== this.session) return false;
           if (this.now() > asked + TIMINGS.sendBy) return false;
+          if (arming && this.covered(mode)) {
+            covered = true;
+            return false;
+          }
           try {
             this.check(mode);
             return this.config.code === code;
@@ -892,8 +988,12 @@ export class VisonicApp {
     } catch (err) {
       if (err instanceof VisonicError && !err.sent) {
         this.logger.warn(`Command NOT sent (${label}): ${err.message}`);
-        if (err.kind === 'withdrawn') {
-          if (ticket?.withdrawn) throw this.refused(T.disarmWithdrawn);
+        if (covered) {
+          this.logger.info(`Arm not sent (${label}): an arm as strong was just sent`);
+          throw this.refused(T.armCovered);
+        }
+        if (err.kind === 'withdrawn' || err.kind === 'preempted') {
+          if (ticket?.withdrawn || err.kind === 'preempted') throw this.refused(T.disarmWithdrawn);
           if (session !== this.session) throw this.refused(T.restarted);
           // The precise reason (option switched off, code changed or stopped).
           this.check(mode);
@@ -902,24 +1002,36 @@ export class VisonicApp {
       }
       if (err instanceof VisonicError && err.kind === 'denied') {
         this.logger.error(`Command REFUSED by the panel (${label}): access denied (user code)`);
+        if (arming) this.lastArm = undefined;
         await this.stopOnCode('access denied');
         this.scheduleReadBack();
         throw this.error(fill(T.codeRefused, name));
       }
       if (err instanceof VisonicError && err.kind === 'ambiguous' && err.denied) {
         // This frame or the one before (with this code) was refused.
+        if (arming) this.lastArm = undefined;
         await this.stopOnCode('ambiguous answer');
+        throw unconfirmed(err.message, err);
       }
-      this.logger.warn(`Command sent, NOT confirmed (${label}): ${err.message}`);
-      onSent();
-      this.scheduleReadBack();
-      throw this.error(fill(T.unconfirmed, name), err);
+      if (!(err instanceof VisonicError && err.kind === 'ambiguous')) {
+        throw unconfirmed(err.message, err);
+      }
+      // An acknowledge that may be an earlier one: the state read back decides.
+      ambiguous = true;
     }
+    if (session !== this.session) throw unconfirmed('the connection restarted');
     onSent();
     // Acknowledged: done only when the state read back shows it.
-    const confirmed = await this.confirm(mode, asked);
+    const confirmed = await this.confirm(mode, asked, session, protective);
     this.scheduleReadBack();
+    if (session !== this.session) throw unconfirmed('the connection restarted');
+    if (!confirmed && this.codeStopped() && !stoppedBefore) {
+      // Acknowledged, then refused: the code was wrong.
+      if (arming) this.lastArm = undefined;
+      throw this.error(fill(T.codeRefused, name));
+    }
     if (!confirmed) {
+      if (ambiguous) throw unconfirmed('ambiguous acknowledge');
       this.logger.warn(`Command acknowledged, state NOT confirmed yet (${label})`);
       throw this.error(fill(T.notApplied, name));
     }
@@ -927,15 +1039,17 @@ export class VisonicApp {
   }
 
   /** Reads the state again until it shows the command, at most until answerBy. */
-  async confirm(mode, asked) {
+  async confirm(mode, asked, session, protective) {
     const answerBy = asked + TIMINGS.answerBy;
     while (answerBy - this.now() > 250) {
+      if (session !== this.session || this.codeStopped()) return false;
       try {
         const status = await this.client.readStatus({
           sendBy: answerBy - 200,
           answerBy,
-          first: true,
+          protective,
         });
+        if (session !== this.session) return false;
         if (VisonicApp.shows(mode, status)) return true;
       } catch {
         return false;
@@ -950,7 +1064,7 @@ export class VisonicApp {
       this.readBacks.delete(timer);
       if (!this.client.connected) return;
       this.client
-        .readStatus()
+        .readStatus({ timeout: TIMINGS.internalRead })
         .catch((err) => this.logger.debug(`Read back failed: ${err.message}`));
     }, TIMINGS.readBack);
     this.readBacks.add(timer);

@@ -100,7 +100,7 @@ export class FakePanel {
     /** The acknowledge of a status request comes after the status (owed acknowledge). */
     this.ackLast = false;
     this.sockets = [];
-    /** Every frame the client sent: [{ session, type, data }]. */
+    /** Every frame the client sent: [{ session, type, data, at }]. */
     this.log = [];
     this.drops = [];
     /** (type, data) -> true: that frame gets no answer. */
@@ -146,7 +146,7 @@ export class FakePanel {
   }
 
   receive(socket, { type, data }) {
-    this.log.push({ session: socket.session, type, data });
+    this.log.push({ session: socket.session, type, data, at: Date.now() });
     if (type === 0x02 || this.silent || this.hold(type, data)) return;
     if (type === 0xa2) {
       const which = data[2];
