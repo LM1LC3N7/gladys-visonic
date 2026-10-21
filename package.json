@@ -1,6 +1,6 @@
 {
   "name": "gladys-visonic",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for Visonic PowerMax and PowerMaster alarm panels, locally over TCP through a serial-to-network adapter. Unofficial, not affiliated with Visonic.",
   "type": "module",

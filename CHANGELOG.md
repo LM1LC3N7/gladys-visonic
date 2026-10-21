@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-21
+
 ### Added
 
 - Local connection to Visonic PowerMax and PowerMaster panels over TCP,
@@ -86,4 +88,5 @@ the notes of the version's GitHub Release.
   an arm away is never held back; alarm events received at the connection
   are read.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-visonic/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-visonic/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-visonic/releases/tag/v0.1.1
