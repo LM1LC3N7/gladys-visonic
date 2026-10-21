@@ -240,6 +240,7 @@ export class VisonicClient extends EventEmitter {
     this.uncertainUntil = 0;
     this.pendingLate = 0;
     this.ackOwedUntil = 0;
+    this.ackFullSince = undefined;
     this.dropRun = 0;
     this.keepAlives = 0;
     this.second = { at: this.now(), frames: 0 };
@@ -495,9 +496,32 @@ export class VisonicClient extends EventEmitter {
   writeAck(generation) {
     if (generation !== this.generation || !this.socket) return;
     const waiting = this.out.filter((item) => item.ack).length;
-    if (waiting >= LIMITS.maxAcksWaiting) {
-      this.logger.warn('Visonic: too many messages to acknowledge, connection cut');
-      this.lost(generation, 'too many messages to acknowledge');
+    const now = this.now();
+    if (waiting < LIMITS.maxAcksWaiting) {
+      this.ackFullSince = undefined;
+    } else {
+      // At the cap: this acknowledge is not queued (the frame is still read;
+      // a panel that sends it again only gives a duplicate). Counted, told
+      // once a minute; the link is cut only when the queue stays full.
+      this.ackFullSince ??= now;
+      this.acksSkipped = (this.acksSkipped ?? 0) + 1;
+      if (this.acksSkippedLogAt === undefined || now - this.acksSkippedLogAt >= 60_000) {
+        this.logger.warn(
+          `Visonic: ${this.acksSkipped} acknowledge(s) not sent, the line cannot follow the panel`,
+        );
+        this.acksSkippedLogAt = now;
+        this.acksSkipped = 0;
+      }
+      if (now - this.ackFullSince >= TIMINGS.ackFullCut) {
+        // After the frame in hand is decoded: never lost by the cut.
+        queueMicrotask(() => {
+          if (generation !== this.generation) return;
+          this.logger.warn(
+            'Visonic: too many messages to acknowledge for too long, connection cut',
+          );
+          this.lost(generation, 'too many messages to acknowledge');
+        });
+      }
       return;
     }
     const at = this.out.findIndex((item) => !item.ack);

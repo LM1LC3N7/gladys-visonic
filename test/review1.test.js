@@ -218,14 +218,11 @@ test('I7: an access denied is never swallowed by a broken or unknown frame', () 
 test('M1 (R7) and M2 (R8): a flapping fire is announced once; 0x0B logged once', async (t) => {
   const ctx = await setup(t);
   await up(ctx);
-  // Paced like a real panel (each one acknowledged in its slot).
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < 40; i += 1) {
     ctx.panel.events([[9, 0x20]]);
     await flush(ctx);
-    await new Promise((r) => setTimeout(r, 200));
     ctx.panel.events([[9, 0x21]]);
     await flush(ctx);
-    await new Promise((r) => setTimeout(r, 200));
   }
   assert.equal(ctx.events().filter((e) => e.key === 'alarm_triggered').length, 1);
   for (let i = 0; i < 40; i += 1) ctx.panel.current.send([0x0b]); // no acknowledge for 0x0B

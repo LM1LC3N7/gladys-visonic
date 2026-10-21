@@ -176,7 +176,7 @@ for (const n of [6, 12, 20]) {
     const ack = await ctx.press('arm-away');
     assert.ok(Date.now() - started < 4_600, `${Date.now() - started} ms`);
     if (n <= 6) assert.equal(ack.success, true, ack.error);
-    assert.ok(ctx.app.client.out.filter((i) => i.ack).length <= 10);
+    assert.ok(ctx.app.client.out.filter((i) => i.ack).length <= 50);
   });
 }
 
@@ -192,7 +192,7 @@ test('B1 (A4b): arm away while the panel sends 6 frames/s to acknowledge: answer
   // Answered in time, the arm written; the line that cannot follow is cut.
   assert.ok(Date.now() - started < 4_600, `${Date.now() - started} ms`);
   assert.ok(ack.success || ctx.panel.commands.length === 1, ack.error);
-  assert.ok(ctx.app.client.out.length <= 12);
+  assert.ok(ctx.app.client.out.length <= 52);
 });
 
 test('B1 (A5): 1 good + 49 malformed frames, 200 times a second: cut, queue bounded', async (t) => {
@@ -209,7 +209,7 @@ test('B1 (A5): 1 good + 49 malformed frames, 200 times a second: cut, queue boun
     await sleep(50);
     max = Math.max(max, ctx.app.client.out.length);
   }
-  assert.ok(max <= 12, `queue ${max}`);
+  assert.ok(max <= 52, `queue ${max}`);
   assert.ok(ctx.app.client.failures >= 1 || !ctx.app.online, 'the link was cut');
 });
 

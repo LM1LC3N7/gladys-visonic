@@ -68,15 +68,16 @@ up to date at the end of every milestone.
 - The rescue of 02 / 08 inside a broken or unknown frame may take data
   bytes `0D 08 F7 0A` for a denial (a cautious effect: the code stops until
   a click). Check how often real broken frames hold such bytes.
-- Whether a real panel ever sends more than 10 messages to acknowledge in a
-  row (the line is cut beyond, as a flood).
+- Whether a real panel ever sends more than 50 messages to acknowledge in a
+  row (beyond, the extra acknowledges are not sent; the link is cut only
+  after 30 s at the cap).
 
 ## Decisions after review 2
 
 - **B1**: a request waiting for its slot keeps its deadline (`sendBy`, or
   its timeout) and is refused "late" at it; at most 2 acknowledges go
-  before it, whatever is queued; more than 10 acknowledges waiting cut the
-  link; more than 100 malformed frames in a minute too.
+  before it, whatever is queued; more than 100 malformed frames in a minute
+  cut the link (the acknowledge cap: see review 3).
 - **I-A**: a disarm written less than 4.5 s ago and not confirmed makes the
   next arm never "nothing sent": the same level is sent again, a stronger
   one read (arm stay on armed away) gives an error "state uncertain", never
@@ -220,3 +221,13 @@ up to date at the end of every milestone.
 - **M11 (not done)**: a fingerprint of the panel from the enrolled zones of
   A5 06 is left for milestone 2 (an enrolment change would refuse the
   disarm: to weigh on a real panel).
+
+## Decisions after review 3
+
+- **R-1**: a frame is always decoded, whatever happens to its acknowledge.
+  At most 50 acknowledges wait for the line (about 9.5 s); beyond, the extra
+  one is not queued (the frame is still read; a panel that sends it again
+  only gives a duplicate), counted and logged once a minute. The link is cut
+  only when the queue stays at the cap 30 s in a row, after the frame in
+  hand is decoded. The guards of 100 malformed frames a minute and 200
+  frames a second stay.

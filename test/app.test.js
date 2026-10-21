@@ -159,8 +159,7 @@ test('reports of the panel become states and scene events (never undefined)', as
     key: 'alarm_triggered',
     data: { kind: 'intrusion', zone: null, fire: false },
   });
-  // A fire (A7 event 0x20) with its zone (once the line acknowledged the rest).
-  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  // A fire (A7 event 0x20) with its zone.
   panel.events([[9, 0x20]]);
   await flush(ctx);
   assert.equal(ctx.state(panelIds.feature('fire-alarm')), 1);

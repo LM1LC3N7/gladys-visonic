@@ -79,8 +79,9 @@ the notes of the version's GitHub Release.
 
 - A request waiting for its slot on the line keeps its deadline (the answer
   to Gladys always comes in time); at most two acknowledges go before it;
-  more than 10 acknowledges waiting, or 100 malformed frames a minute, cut
-  the link (review 2).
+  100 malformed frames a minute cut the link (review 2). Every frame is
+  decoded; at most 50 acknowledges wait, the extra ones are not sent, and
+  the link is cut only after 30 s at that cap (review 3).
 - After a disarm with no known outcome, an arm is never "nothing sent";
   an arm away is never held back; alarm events received at the connection
   are read.

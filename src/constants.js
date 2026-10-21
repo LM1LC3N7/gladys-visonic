@@ -64,8 +64,8 @@ export const LIMITS = {
   maxRejects: 50,
   /** Malformed frames in one minute before the link is cut (pyvisonic CRC_ERROR_PERIOD). */
   maxRejectsPerMinute: 100,
-  /** Acknowledges waiting for the line before it is cut (it cannot follow the panel). */
-  maxAcksWaiting: 10,
+  /** Acknowledges waiting for the line at most (about 9.5 s of line); more are not queued. */
+  maxAcksWaiting: 50,
   /** Acknowledges that may go before a request waiting for its slot. */
   acksAhead: 2,
   /** Frames received per second before the link is cut (a flood, a loop). */
@@ -81,6 +81,8 @@ export const TIMINGS = {
   firstStatusTimeout: 10_000,
   /** A keep-alive or a read back: a short wait, it never holds the line for long. */
   internalRead: 1_500,
+  /** The acknowledge queue full this long in a row: the link is cut. */
+  ackFullCut: 30_000,
   /** Between two frames written, acknowledges included (pyvisonic: 190 ms PowerMax, 150 ms PowerMaster). */
   frameSpacing: 190,
   /** What the adapter sends in the first moments of a connection is not read (bytes it kept). */
