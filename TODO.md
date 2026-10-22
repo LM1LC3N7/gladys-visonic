@@ -69,8 +69,7 @@ up to date at the end of every milestone.
   bytes `0D 08 F7 0A` for a denial (a cautious effect: the code stops until
   a click). Check how often real broken frames hold such bytes.
 - Whether a real panel ever sends more than 50 messages to acknowledge in a
-  row (beyond, the extra acknowledges are not sent; the link is cut only
-  after 30 s at the cap).
+  row (beyond, the extra acknowledges are not sent; the link is not cut).
 
 ## Decisions after review 2
 
@@ -231,3 +230,15 @@ up to date at the end of every milestone.
   only when the queue stays at the cap 30 s in a row, after the frame in
   hand is decoded. The guards of 100 malformed frames a minute and 200
   frames a second stay.
+
+## Decisions of 0.1.2
+
+- **n1**: the cut after 30 s at the acknowledge cap is removed: it almost
+  never fired (the counter restarted as soon as the queue fell to 49), and
+  the memory is bounded by the cap anyway (50 acknowledges, at most one
+  request item). A real burst never cuts the link; a flood is still cut by
+  the guards of 200 frames a second and 100 malformed frames a minute.
+- **n2**: a command whose connection is cut before its write (a guard, a
+  loss) says "the connection to the panel was cut", no longer "the panel
+  answered too slowly"; a command already written stays "sent, without
+  confirmation".

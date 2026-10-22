@@ -81,8 +81,6 @@ export const TIMINGS = {
   firstStatusTimeout: 10_000,
   /** A keep-alive or a read back: a short wait, it never holds the line for long. */
   internalRead: 1_500,
-  /** The acknowledge queue full this long in a row: the link is cut. */
-  ackFullCut: 30_000,
   /** Between two frames written, acknowledges included (pyvisonic: 190 ms PowerMax, 150 ms PowerMaster). */
   frameSpacing: 190,
   /** What the adapter sends in the first moments of a connection is not read (bytes it kept). */

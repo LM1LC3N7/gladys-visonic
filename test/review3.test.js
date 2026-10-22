@@ -87,7 +87,7 @@ test('C4: a fire behind 12 frames to acknowledge: seen', async (t) => {
   assert.equal(ctx.app.online, true);
 });
 
-test('199 good frames a second for 60 s: every frame decoded, the queue at its cap, cut only after 30 s full', () => {
+test('199 good frames a second for 60 s: every frame decoded, the queue at its cap, never cut', () => {
   let now = 0;
   const timers = {
     setTimeout: () => 1,
@@ -125,8 +125,40 @@ test('199 good frames a second for 60 s: every frame decoded, the queue at its c
       if (!client.socket) cutAt = s;
     }
     assert.ok(max <= LIMITS.maxAcksWaiting, `queue ${max}`);
-    assert.equal(events, 199 * (cutAt === undefined ? 60 : cutAt + 1), 'every frame decoded');
-    assert.ok(cutAt === undefined || cutAt >= 29, `cut at ${cutAt} s`);
+    assert.equal(cutAt, undefined, 'the memory is bounded: never cut for the acknowledges');
+    assert.equal(events, 199 * 60, 'every frame decoded');
     assert.ok(logger.lines.filter((l) => l.includes('not sent, the line')).length <= 2);
   })();
+});
+
+test('0.1.2 n2: a command whose connection a guard cuts says "connection cut"', async (t) => {
+  const gladys = createFakeGladys({ config: { ...BASE, allow_disarm: true } });
+  const panel = new FakePanel();
+  const logger = quietLogger();
+  const app = new VisonicApp({ gladys, logger, connect: panel.connect, store: memoryStore() });
+  registerHandlers(gladys, app, logger);
+  await gladys.connect();
+  t.after(() => app.stop({ final: true }));
+  await until(() => app.online);
+  await app.chain;
+  await settle();
+  panel.sysStatus = SYS.ARMED_AWAY;
+  panel.hold = (type) => type === 0xa2;
+  const ids = gladys.externalIds('panel', 'visonic');
+  const d = gladys.fake.discoveredDevices.find((x) => x.external_id === ids.device);
+  const pressed = gladys.fake.setValue(
+    d,
+    d.features.find((f) => f.external_id === ids.feature('disarm')),
+    1,
+  );
+  await until(() => panel.statusRequests.length >= 2);
+  // A flood: more than 200 frames in a second, the guard cuts the link.
+  const flood = Buffer.concat(
+    Array.from({ length: 210 }, () => Buffer.from([0x0d, 0x0b, 0xf4, 0x0a])),
+  );
+  panel.current.raw(flood);
+  const ack = await pressed;
+  assert.equal(ack.success, false);
+  assert.match(ack.error, /connection to the panel was cut/);
+  assert.equal(panel.commands.length, 0);
 });

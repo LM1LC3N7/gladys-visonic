@@ -131,6 +131,10 @@ export const T = {
     en: 'A disarm sent just before may still apply: the state is uncertain, it is read again in 2 s. Arm again if needed.',
     fr: "Un désarmement envoyé juste avant peut encore s'appliquer : l'état est incertain, il est relu dans 2 s. Réarmez si besoin.",
   },
+  linkCut: {
+    en: `The connection to the panel was cut before the command could be written${nothing.en}`,
+    fr: `La connexion à la centrale a été coupée avant que la commande puisse être écrite${nothing.fr}`,
+  },
   restarted: {
     en: `The connection to the panel restarted while the command was being prepared${nothing.en}`,
     fr: `La connexion à la centrale a redémarré pendant la préparation de la commande${nothing.fr}`,

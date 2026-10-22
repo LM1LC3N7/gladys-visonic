@@ -10,6 +10,16 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+### Fixed
+
+- The link is no longer cut after 30 s with the acknowledge queue at its
+  cap: the memory is bounded by the cap (50), a real burst never cuts the
+  link; floods are still cut by the 200 frames a second and malformed frame
+  guards.
+- A command whose connection is cut before it is written now says "the
+  connection to the panel was cut" instead of "the panel answered too
+  slowly".
+
 ## [0.1.1] - 2026-10-21
 
 ### Added

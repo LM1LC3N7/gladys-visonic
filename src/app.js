@@ -757,6 +757,7 @@ export class VisonicApp {
     } catch (err) {
       if (err instanceof VisonicError && err.kind === 'late') throw this.refused(T.tooLate);
       if (err instanceof VisonicError && err.kind === 'offline') throw this.refused(T.offline);
+      if (err instanceof VisonicError && err.kind === 'lost') throw this.refused(T.linkCut);
       if (err instanceof VisonicError && err.kind === 'withdrawn') {
         throw this.refused(T.disarmWithdrawn);
       }
@@ -1023,6 +1024,7 @@ export class VisonicApp {
           // The precise reason (option switched off, code changed or stopped).
           this.check(mode);
         }
+        if (err.kind === 'lost') throw this.refused(T.linkCut);
         throw this.refused(err.kind === 'offline' ? T.offline : T.tooLate);
       }
       if (err instanceof VisonicError && err.kind === 'denied') {
