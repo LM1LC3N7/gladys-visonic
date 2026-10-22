@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-22
+
 ### Fixed
 
 - The link is no longer cut after 30 s with the acknowledge queue at its
@@ -98,5 +100,6 @@ the notes of the version's GitHub Release.
   an arm away is never held back; alarm events received at the connection
   are read.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-visonic/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/LM1LC3N7/gladys-visonic/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/LM1LC3N7/gladys-visonic/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/LM1LC3N7/gladys-visonic/releases/tag/v0.1.1
