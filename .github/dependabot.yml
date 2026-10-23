@@ -1,9 +1,17 @@
 # -----------------------------------------------------------------------------
 # Dependabot: update pull requests, checked by the CI like any other.
 #
-#   - npm, weekly: the Gladys SDK first of all (new device categories and
-#     features arrive through it); the development tools share one PR;
-#   - GitHub Actions, monthly.
+#   - npm, monthly, at most two pull requests open at a time:
+#       - the minor and patch updates of the runtime dependencies (the Gladys
+#         SDK first of all: new device categories and features arrive through
+#         it) share one PR;
+#       - the development tools share another;
+#       - a major update keeps its own PR, as it may need code changes;
+#   - GitHub Actions, monthly, all in one PR.
+#
+# Monthly and grouped: every update pull request runs the CI, and the GitHub
+# Actions minutes are counted. Security updates are not delayed by this
+# schedule: they follow the repository's Dependabot security updates setting.
 #
 # The Docker base image is left out on purpose: `node:24-alpine` is a moving
 # tag, pulled fresh by every release build (latest Node 24 and Alpine patches),
@@ -15,8 +23,14 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 2
     groups:
+      runtime:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
       dev-dependencies:
         dependency-type: development
 
@@ -24,3 +38,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    groups:
+      github-actions:
+        patterns:
+          - '*'
